@@ -16,7 +16,7 @@ pub fn video_source(ctx: &PlatformContext, show_cursor: bool) -> String {
     } else {
         // Capture frames directly from the X11 root window via ximagesrc, utilizing XDamage to optimize redraw updates.
         format!(
-            "ximagesrc use-damage=true show-cursor={show_cursor} do-timestamp=true ! \
+            "ximagesrc use-damage=true show-pointer={show_cursor} do-timestamp=true ! \
             queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
             show_cursor = if show_cursor { "true" } else { "false" },
         )
