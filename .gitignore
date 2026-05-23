@@ -1,0 +1,5 @@
+target/
+src/orchestrator/venv/
+__pycache__/
+*.pyc
+.env

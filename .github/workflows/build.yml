@@ -1,0 +1,215 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+env:
+  GST_VERSION: "1.28.3"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Rust Toolchain Setup & Cache
+      - name: Install Rust (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install Rust (Windows MSVC)
+        if: matrix.os == 'windows-latest'
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Dependency Installation
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libpipewire-0.3-dev libxdo-dev pkg-config
+
+      - name: Cache GStreamer installation (Windows)
+        if: matrix.os == 'windows-latest'
+        id: cache-gst
+        uses: actions/cache@v4
+        with:
+          path: C:\gstreamer
+          key: gstreamer-msvc-${{ matrix.target }}-${{ env.GST_VERSION }}
+
+      - name: Install pkg-config (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          # Install pkg-config on each run to ensure availability
+          choco install -y pkgconfiglite
+
+      - name: Setup Windows GStreamer (MSVC)
+        if: matrix.os == 'windows-latest' && steps.cache-gst.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          $version = "${{ env.GST_VERSION }}"
+          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$version/msvc/gstreamer-1.0-msvc-x86_64-$version.exe"
+          $gstreamerRoot = "C:\gstreamer\1.0\msvc_x86_64"
+
+          Write-Host "Downloading Unified GStreamer Installer $version..."
+          curl.exe -L -o gstreamer-installer.exe $url
+
+          Write-Host "Installing GStreamer to $gstreamerRoot..."
+          Start-Process gstreamer-installer.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLUSERS', '/TYPE=devel', "/DIR=$gstreamerRoot" -NoNewWindow -Wait
+
+          if (-Not (Test-Path $gstreamerRoot)) {
+            throw "GStreamer installation failed to install at $gstreamerRoot"
+          }
+
+      - name: Set GStreamer environment variables (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          # Set paths and environment configurations
+          $gstreamerRoot = "C:\gstreamer\1.0\msvc_x86_64"
+          Add-Content -Path $env:GITHUB_ENV -Value "GSTREAMER_ROOT=$gstreamerRoot"
+          Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG_PATH=$gstreamerRoot\lib\pkgconfig"
+          Add-Content -Path $env:GITHUB_PATH -Value "$gstreamerRoot\bin"
+
+      # Build Stage
+      - name: Build Binary (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "true"
+          CARGO_PROFILE_RELEASE_STRIP: "true"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Build Binary (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "true"
+          CARGO_PROFILE_RELEASE_STRIP: "true"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      # Packaging Stage
+      - name: Prepare Windows Portable Package
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $dist = Join-Path $PWD dist
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          # Copy main executable
+          Copy-Item -Path (Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe") -Destination (Join-Path $dist "ferrumcast.exe") -Force
+
+          # Copy GStreamer runtime libraries
+          $gstBin = Join-Path $env:GSTREAMER_ROOT 'bin'
+          
+          $dlls = @(
+            'ffi-7.dll'
+            'gio-2.0-0.dll'
+            'glib-2.0-0.dll'
+            'gmodule-2.0-0.dll'
+            'gobject-2.0-0.dll'
+            'gstallocators-1.0-0.dll'
+            'gstapp-1.0-0.dll'
+            'gstaudio-1.0-0.dll'
+            'gstbase-1.0-0.dll'
+            'gstcontroller-1.0-0.dll'
+            'gstnet-1.0-0.dll'
+            'gstpbutils-1.0-0.dll'
+            'gstreamer-1.0-0.dll'
+            'gstrtp-1.0-0.dll'
+            'gstsctp-1.0-0.dll'
+            'gstsdp-1.0-0.dll'
+            'gstvideo-1.0-0.dll'
+            'gstwebrtc-1.0-0.dll'
+            'gstwebrtcnice-1.0-0.dll'
+            'gthread-2.0-0.dll'
+            'iconv-2.dll'
+            'intl-8.dll'
+            'json-glib-1.0-0.dll'
+            'libcrypto-3-x64.dll'
+            'libssl-3-x64.dll'
+            'libwinpthread-1.dll'
+            'nice-10.dll'
+            'opus-0.dll'
+            'orc-0.4-0.dll'
+            'pcre2-8-0.dll'
+            'proxy-1.dll'
+            'srtp2-1.dll'
+            'x264-164.dll'
+            'z-1.dll'
+          )
+
+          foreach ($dll in $dlls) {
+            $src = Join-Path $gstBin $dll
+            if (Test-Path $src) {
+              Copy-Item -Path $src -Destination $dist -Force
+              Write-Host "Copied: $dll"
+            } else {
+              Write-Error "Missing expected DLL: $src"
+              exit 1
+            }
+          }
+
+          $scanner = Join-Path $gstBin 'gst-plugin-scanner.exe'
+          if (Test-Path $scanner) {
+            Copy-Item -Path $scanner -Destination $dist -Force
+            Write-Host "Copied: gst-plugin-scanner.exe"
+          }
+
+          Compress-Archive -Path (Join-Path $dist '*') -DestinationPath (Join-Path $PWD 'ferrumcast-windows.zip') -Force
+          Add-Content -Path $env:GITHUB_ENV -Value 'UPLOAD_TARGET=ferrumcast-windows.zip'
+
+      - name: Prepare Linux Binary
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/ferrumcast target/${{ matrix.target }}/release/ferrumcast-linux
+          echo "UPLOAD_TARGET=target/${{ matrix.target }}/release/ferrumcast-linux" >> $GITHUB_ENV
+
+      # Upload Artifacts
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferrumcast-${{ matrix.target }}
+          path: ${{ matrix.os == 'windows-latest' && 'dist/' || env.UPLOAD_TARGET }}
+          if-no-files-found: error
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.UPLOAD_TARGET }}
+          fail_on_unmatched_files: true
