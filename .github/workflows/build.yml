@@ -35,6 +35,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Ensure it checks out FerrumCast code even when called from PCLink
+          repository: BYTEDz/FerrumCast
+          # Use the main branch (or the tag that triggered the call)
+          ref: ${{ github.event_name == 'workflow_call' && 'main' || github.ref }}
 
       # Rust Toolchain Setup & Cache
       - name: Install Rust (Linux)
@@ -75,7 +80,6 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          # Install pkg-config on each run to ensure availability
           choco install -y pkgconfiglite
 
       - name: Setup Windows GStreamer (MSVC)
@@ -85,22 +89,16 @@ jobs:
           $version = "${{ env.GST_VERSION }}"
           $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$version/msvc/gstreamer-1.0-msvc-x86_64-$version.exe"
           $gstreamerRoot = "C:\gstreamer\1.0\msvc_x86_64"
-
           Write-Host "Downloading Unified GStreamer Installer $version..."
           curl.exe -L -o gstreamer-installer.exe $url
-
           Write-Host "Installing GStreamer to $gstreamerRoot..."
           Start-Process gstreamer-installer.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLUSERS', '/TYPE=devel', "/DIR=$gstreamerRoot" -NoNewWindow -Wait
-
-          if (-Not (Test-Path $gstreamerRoot)) {
-            throw "GStreamer installation failed to install at $gstreamerRoot"
-          }
+          if (-Not (Test-Path $gstreamerRoot)) { throw "GStreamer installation failed" }
 
       - name: Set GStreamer environment variables (Windows)
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          # Set paths and environment configurations
           $gstreamerRoot = "C:\gstreamer\1.0\msvc_x86_64"
           Add-Content -Path $env:GITHUB_ENV -Value "GSTREAMER_ROOT=$gstreamerRoot"
           Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG_PATH=$gstreamerRoot\lib\pkgconfig"
@@ -113,10 +111,7 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_LTO: "true"
           CARGO_PROFILE_RELEASE_STRIP: "true"
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build Binary (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -124,10 +119,7 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_LTO: "true"
           CARGO_PROFILE_RELEASE_STRIP: "true"
-          CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       # Packaging Stage
       - name: Prepare Windows Portable Package
@@ -136,69 +128,14 @@ jobs:
         run: |
           $dist = Join-Path $PWD dist
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
-
-          # Copy main executable
           Copy-Item -Path (Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe") -Destination (Join-Path $dist "ferrumcast.exe") -Force
-
-          # Copy GStreamer runtime libraries
           $gstBin = Join-Path $env:GSTREAMER_ROOT 'bin'
-          
-          $dlls = @(
-            'ffi-7.dll'
-            'gio-2.0-0.dll'
-            'glib-2.0-0.dll'
-            'gmodule-2.0-0.dll'
-            'gobject-2.0-0.dll'
-            'gstallocators-1.0-0.dll'
-            'gstapp-1.0-0.dll'
-            'gstaudio-1.0-0.dll'
-            'gstbase-1.0-0.dll'
-            'gstcontroller-1.0-0.dll'
-            'gstnet-1.0-0.dll'
-            'gstpbutils-1.0-0.dll'
-            'gstreamer-1.0-0.dll'
-            'gstrtp-1.0-0.dll'
-            'gstsctp-1.0-0.dll'
-            'gstsdp-1.0-0.dll'
-            'gstvideo-1.0-0.dll'
-            'gstwebrtc-1.0-0.dll'
-            'gstwebrtcnice-1.0-0.dll'
-            'gthread-2.0-0.dll'
-            'iconv-2.dll'
-            'intl-8.dll'
-            'json-glib-1.0-0.dll'
-            'libcrypto-3-x64.dll'
-            'libssl-3-x64.dll'
-            'libwinpthread-1.dll'
-            'nice-10.dll'
-            'opus-0.dll'
-            'orc-0.4-0.dll'
-            'pcre2-8-0.dll'
-            'proxy-1.dll'
-            'srtp2-1.dll'
-            'x264-164.dll'
-            'z-1.dll'
-          )
-
-          foreach ($dll in $dlls) {
-            $src = Join-Path $gstBin $dll
-            if (Test-Path $src) {
-              Copy-Item -Path $src -Destination $dist -Force
-              Write-Host "Copied: $dll"
-            } else {
-              Write-Error "Missing expected DLL: $src"
-              exit 1
-            }
-          }
-
+          $dlls = @('ffi-7.dll', 'gio-2.0-0.dll', 'glib-2.0-0.dll', 'gmodule-2.0-0.dll', 'gobject-2.0-0.dll', 'gstallocators-1.0-0.dll', 'gstapp-1.0-0.dll', 'gstaudio-1.0-0.dll', 'gstbase-1.0-0.dll', 'gstcontroller-1.0-0.dll', 'gstnet-1.0-0.dll', 'gstpbutils-1.0-0.dll', 'gstreamer-1.0-0.dll', 'gstrtp-1.0-0.dll', 'gstsctp-1.0-0.dll', 'gstsdp-1.0-0.dll', 'gstvideo-1.0-0.dll', 'gstwebrtc-1.0-0.dll', 'gstwebrtcnice-1.0-0.dll', 'gthread-2.0-0.dll', 'iconv-2.dll', 'intl-8.dll', 'json-glib-1.0-0.dll', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll', 'libwinpthread-1.dll', 'nice-10.dll', 'opus-0.dll', 'orc-0.4-0.dll', 'pcre2-8-0.dll', 'proxy-1.dll', 'srtp2-1.dll', 'x264-164.dll', 'z-1.dll')
+          foreach ($dll in $dlls) { Copy-Item -Path (Join-Path $gstBin $dll) -Destination $dist -Force }
           $scanner = Join-Path $gstBin 'gst-plugin-scanner.exe'
-          if (Test-Path $scanner) {
-            Copy-Item -Path $scanner -Destination $dist -Force
-            Write-Host "Copied: gst-plugin-scanner.exe"
-          }
-
+          if (Test-Path $scanner) { Copy-Item -Path $scanner -Destination $dist -Force }
           Compress-Archive -Path (Join-Path $dist '*') -DestinationPath (Join-Path $PWD 'ferrumcast-windows.zip') -Force
-          Add-Content -Path $env:GITHUB_ENV -Value 'UPLOAD_TARGET=ferrumcast-windows.zip'
+          echo "UPLOAD_TARGET=ferrumcast-windows.zip" >> $env:GITHUB_ENV
 
       - name: Prepare Linux Binary
         if: matrix.os == 'ubuntu-latest'
