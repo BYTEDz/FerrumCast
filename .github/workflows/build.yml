@@ -29,6 +29,8 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
 
@@ -41,7 +43,7 @@ jobs:
 
       # Rust Toolchain Setup & Cache
       - name: Install Rust (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
@@ -61,7 +63,7 @@ jobs:
 
       # Dependency Installation
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libpipewire-0.3-dev libxdo-dev pkg-config
@@ -112,7 +114,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build Binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         shell: bash
         env:
           CARGO_PROFILE_RELEASE_LTO: "true"
@@ -136,7 +138,7 @@ jobs:
           echo "UPLOAD_TARGET=ferrumcast-windows.zip" >> $env:GITHUB_ENV
 
       - name: Prepare Linux Binary
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         shell: bash
         run: |
           cp target/${{ matrix.target }}/release/ferrumcast target/${{ matrix.target }}/release/ferrumcast-linux
