@@ -1,7 +1,15 @@
-name: Release
+name: Build FerrumCast
 
 on:
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      windows-artifact:
+        description: 'Windows artifact name'
+        value: ferrumcast-x86_64-pc-windows-msvc
+      linux-artifact:
+        description: 'Linux artifact name'
+        value: ferrumcast-x86_64-unknown-linux-gnu
   release:
     types: [created]
 
