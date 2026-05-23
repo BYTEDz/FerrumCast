@@ -31,12 +31,12 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: windows-latest
+          - os: windows-2025
             target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: BYTEDz/FerrumCast
           ref: ${{ github.repository != 'BYTEDz/FerrumCast' && 'main' || github.ref }}
@@ -50,7 +50,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Rust (Windows MSVC)
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable-x86_64-pc-windows-msvc
@@ -69,21 +69,21 @@ jobs:
           sudo apt-get install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libpipewire-0.3-dev libxdo-dev pkg-config
 
       - name: Cache GStreamer installation (Windows)
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         id: cache-gst
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: C:\gstreamer
           key: gstreamer-msvc-${{ matrix.target }}-${{ env.GST_VERSION }}
 
       - name: Install pkg-config (Windows)
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         shell: powershell
         run: |
           choco install -y pkgconfiglite
 
       - name: Setup Windows GStreamer (MSVC)
-        if: matrix.os == 'windows-latest' && steps.cache-gst.outputs.cache-hit != 'true'
+        if: startsWith(matrix.os, 'windows') && steps.cache-gst.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $version = "${{ env.GST_VERSION }}"
@@ -96,7 +96,7 @@ jobs:
           if (-Not (Test-Path $gstreamerRoot)) { throw "GStreamer installation failed" }
 
       - name: Set GStreamer environment variables (Windows)
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         shell: powershell
         run: |
           $gstreamerRoot = "C:\gstreamer\1.0\msvc_x86_64"
@@ -106,7 +106,7 @@ jobs:
 
       # Build Stage
       - name: Build Binary (Windows)
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         shell: powershell
         env:
           CARGO_PROFILE_RELEASE_LTO: "true"
@@ -123,7 +123,7 @@ jobs:
 
       # Packaging Stage
       - name: Prepare Windows Portable Package
-        if: matrix.os == 'windows-latest'
+        if: startsWith(matrix.os, 'windows')
         shell: powershell
         run: |
           $dist = Join-Path $PWD dist
@@ -146,10 +146,10 @@ jobs:
 
       # Upload Artifacts
       - name: Upload Workflow Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ferrumcast-${{ matrix.target }}
-          path: ${{ matrix.os == 'windows-latest' && 'dist/' || env.UPLOAD_TARGET }}
+          path: ${{ startsWith(matrix.os, 'windows') && 'dist/' || env.UPLOAD_TARGET }}
           if-no-files-found: error
 
       - name: Upload to GitHub Release
