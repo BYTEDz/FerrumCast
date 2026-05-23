@@ -36,10 +36,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Ensure it checks out FerrumCast code even when called from PCLink
           repository: BYTEDz/FerrumCast
-          # Use the main branch (or the tag that triggered the call)
-          ref: ${{ github.event_name == 'workflow_call' && 'main' || github.ref }}
+          ref: ${{ github.repository != 'BYTEDz/FerrumCast' && 'main' || github.ref }}
 
       # Rust Toolchain Setup & Cache
       - name: Install Rust (Linux)
