@@ -19,6 +19,14 @@ const TOKEN_FILE: &str = "/tmp/ferrumcast.token";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Enable system-level DPI awareness on Windows to prevent coordinate scaling or virtualization issues.
+    // Without this call, Windows scales down system metrics and screen sizes on high-DPI displays,
+    // which results in capturing only the upper-left portion of the window or screen.
+    #[cfg(target_os = "windows")]
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
+    }
+
     unsafe {
         std::env::set_var("NICE_DISABLE_UPNP", "1");
     }
