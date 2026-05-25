@@ -4,6 +4,7 @@ use gstreamer as gst;
 use gstreamer_sdp as gst_sdp;
 use gstreamer_webrtc as gst_webrtc;
 use parking_lot::Mutex;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::ipc::OutboundMessage;
@@ -60,7 +61,7 @@ impl StreamManager {
         self.active_encoder.lock().clone()
     }
 
-    pub fn start(&self) -> Result<()> {
+    pub fn start(self: &Arc<Self>) -> Result<()> {
         let sender = self.sender.clone();
         let pipeline = self.pipeline.lock();
 
@@ -75,6 +76,22 @@ impl StreamManager {
                         mid: None,
                         mline_index: Some(mline_index),
                     });
+                }
+                None
+            });
+
+            // Monitor connection state to auto-stop when client disappears, preventing zombie engines from blocking the server.
+            let self_clone = Arc::clone(self);
+            webrtcbin.connect("on-ice-connection-state-changed", false, move |values| {
+                if let Some(state) = values[0].get::<String>().ok() {
+                    info!("WebRTC ICE connection state changed: {}", state);
+                    if state == "failed" || state == "closed" || state == "disconnected" {
+                        info!("Client disconnected or connection failed. Stopping pipeline to release resources.");
+                        let manager = Arc::clone(&self_clone);
+                        tokio::spawn(async move {
+                            let _ = manager.stop();
+                        });
+                    }
                 }
                 None
             });
