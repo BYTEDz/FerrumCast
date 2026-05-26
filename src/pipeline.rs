@@ -133,10 +133,25 @@ impl PipelineBuilder {
                 )
             }
             crate::config::OutputMode::Rtp => {
+                let mut video = video_chain;
+                let mut audio = audio_src;
+                if let Some(ref srtp_key) = cfg.srtp_key {
+                    video = format!(
+                        "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
+                        video, srtp_key
+                    );
+                    if cfg.audio {
+                        audio = format!(
+                            "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
+                            audio, srtp_key
+                        );
+                    }
+                }
+
                 let audio_branch = if cfg.audio {
                     format!(
                         " {} ! udpsink host={} port=5006 sync=false async=false buffer-size=1048576",
-                        audio_src, cfg.client_host
+                        audio, cfg.client_host
                     )
                 } else {
                     String::new()
@@ -144,7 +159,7 @@ impl PipelineBuilder {
 
                 format!(
                     "{} ! udpsink host={} port=5004 sync=false async=false buffer-size={}{}",
-                    video_chain, cfg.client_host, udp_buf, audio_branch
+                    video, cfg.client_host, udp_buf, audio_branch
                 )
             }
         }

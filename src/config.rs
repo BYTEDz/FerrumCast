@@ -269,8 +269,13 @@ pub struct StreamConfig {
     #[serde(default = "default_show_cursor")]
     pub show_cursor: bool,
     /// GStreamer colorimetry tag: bt709, bt601, bt2020.
+    /// GStreamer colorimetry tag: bt709, bt601, bt2020.
     #[serde(default = "default_colorimetry")]
     pub colorimetry: String,
+
+    /// Optional SRTP Master key and salt (concatenated hex string)
+    #[serde(default)]
+    pub srtp_key: Option<String>,
 }
 
 impl Default for StreamConfig {
@@ -304,6 +309,7 @@ impl Default for StreamConfig {
             udp_buffer_size: default_udp_buffer_size(),
             show_cursor: default_show_cursor(),
             colorimetry: default_colorimetry(),
+            srtp_key: None,
         }
     }
 }
@@ -569,6 +575,10 @@ impl ConfigStore {
                 "--colorimetry" => {
                     if let Some(val) = args.next() { cfg.colorimetry = val; }
                     else { warn!("Missing value for --colorimetry"); }
+                }
+                "--srtp-key" => {
+                    if let Some(val) = args.next() { cfg.srtp_key = Some(val); }
+                    else { warn!("Missing value for --srtp-key"); }
                 }
                 _ => {}
             }
