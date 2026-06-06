@@ -3,7 +3,7 @@ mod config;
 mod gdi_capture;
 mod ipc;
 mod pipeline;
-mod webrtc;
+mod stream;
 
 #[cfg(target_os = "linux")]
 mod portal;
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
 
     info!("pipeline: {}", pipeline_str);
 
-    let stream_manager = match webrtc::StreamManager::new(&pipeline_str, outbound_tx.clone()) {
+    let stream_manager = match stream::StreamManager::new(&pipeline_str) {
         Ok(m) => Arc::new(m),
         Err(e) => {
             error!("failed to init stream: {}", e);
@@ -175,19 +175,6 @@ async fn main() -> Result<()> {
                     let platform_ctx = platform_ctx_c.clone();
                     async move {
                         match msg {
-                            ipc::InboundMessage::SetRemoteSdp { sdp, sdp_type } => {
-                                let _ = stream.handle_remote_sdp(&sdp, &sdp_type);
-                            }
-                            ipc::InboundMessage::AddIceCandidate {
-                                candidate,
-                                mid,
-                                mline_index,
-                            } => {
-                                let _ = stream.add_ice_candidate(&candidate, mid, mline_index);
-                            }
-                            ipc::InboundMessage::RequestOffer => {
-                                let _ = stream.generate_offer();
-                            }
                             ipc::InboundMessage::StopStream => {
                                 info!("stopping pipeline (engine stays alive)");
                                 let _ = stream.stop();

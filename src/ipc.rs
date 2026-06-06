@@ -12,18 +12,6 @@ use tracing::{error, info};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum InboundMessage {
-    SetRemoteSdp {
-        sdp: String,
-        sdp_type: String,
-    },
-    AddIceCandidate {
-        candidate: String,
-        #[serde(rename = "sdpMid")]
-        mid: Option<String>,
-        #[serde(rename = "sdpMLineIndex")]
-        mline_index: Option<u32>,
-    },
-    RequestOffer,
     StopStream,
     ConfigureStream(StreamConfig),
     GetCapabilities,
@@ -34,17 +22,6 @@ pub enum InboundMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OutboundMessage {
-    LocalSdpGenerated {
-        sdp: String,
-        sdp_type: String,
-    },
-    LocalIceCandidate {
-        candidate: String,
-        #[serde(rename = "sdpMid")]
-        mid: Option<String>,
-        #[serde(rename = "sdpMLineIndex")]
-        mline_index: Option<u32>,
-    },
     StreamError {
         message: String,
     },

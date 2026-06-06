@@ -17,14 +17,6 @@ pub enum EncoderChoice {
     Mf,
 }
 
-/// Streaming output protocols supported by the media pipeline.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum OutputMode {
-    #[default]
-    Rtp,
-    WebRtc,
-}
 
 /// Explicit representation of a supported GStreamer video encoder confirmed to be
 /// present in the local GStreamer plugin registry.
@@ -200,8 +192,6 @@ pub struct StreamConfig {
     pub bitrate: u32,
     #[serde(default)]
     pub encoder: EncoderChoice,
-    #[serde(default)]
-    pub output_mode: OutputMode,
     #[serde(default = "default_client_host")]
     pub client_host: String,
     #[serde(default = "default_audio")]
@@ -286,7 +276,6 @@ impl Default for StreamConfig {
             framerate: None,
             bitrate: default_bitrate(),
             encoder: EncoderChoice::Auto,
-            output_mode: OutputMode::Rtp,
             client_host: default_client_host(),
             audio: true,
             token: None,
@@ -444,15 +433,6 @@ impl ConfigStore {
                         if let Ok(v) = val.parse() { cfg.bitrate = v; }
                         else { warn!("Invalid bitrate value"); }
                     } else { warn!("Missing value for --bitrate"); }
-                }
-                "--output" => {
-                    if let Some(val) = args.next() {
-                        cfg.output_mode = if val.to_lowercase() == "rtp" {
-                            OutputMode::Rtp
-                        } else {
-                            OutputMode::WebRtc
-                        };
-                    } else { warn!("Missing value for --output"); }
                 }
                 "--host" => {
                     if let Some(val) = args.next() { cfg.client_host = val; }

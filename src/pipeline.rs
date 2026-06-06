@@ -59,13 +59,14 @@ impl PipelineBuilder {
                 }
             }
         } else {
+            // FIX: Enable Zero-Copy on Linux for Wayland/PipeWire DMA-BUFs!
             match enc {
                 ResolvedEncoder::VaH264 => {
-                    // Enforce NV12 format in system memory and delegate host-to-device upload to vah264enc,
-                    // bypassing the need for vapostproc or direct VAMemory allocations.
-                    ("videoconvert n-threads=0", None, false)
+                    ("vapostproc", Some("video/x-raw(memory:VAMemory)"), true)
                 }
-                ResolvedEncoder::Nvenc => ("glcolorconvert", None, false),
+                ResolvedEncoder::Nvenc => {
+                    ("glcolorconvert", Some("video/x-raw(memory:GLMemory)"), true)
+                }
                 _ => ("videoconvert n-threads=0", None, false),
             }
         };
@@ -83,9 +84,8 @@ impl PipelineBuilder {
         // Configure leaky queues with configurable buffer limits. For real-time interactive streaming,
         // dropping older frames (leaky=downstream) is preferred over introducing queuing delays
         // during transient network congestion.
-        let video_chain = format!(
+        let mut video = format!(
             "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
-            queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} leaky=downstream ! \
             video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 ! \
             video/x-h264,stream-format=byte-stream,alignment=au ! \
             queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} leaky=downstream ! \
@@ -99,10 +99,10 @@ impl PipelineBuilder {
             agg = cfg.aggregate_mode,
         );
 
-        let audio_src = if cfg.audio {
+        let mut audio = if cfg.audio {
             let src = self::sys::audio_source();
             format!(
-                "{} ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+                "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
                 audioconvert ! audioresample ! opusenc ! rtpopuspay",
                 src
             )
@@ -110,59 +110,35 @@ impl PipelineBuilder {
             String::new()
         };
 
-        let udp_buf = cfg.udp_buffer_size;
-
-        match cfg.output_mode {
-            crate::config::OutputMode::WebRtc => {
-                let audio_branch = if cfg.audio {
-                    format!(
-                        "{} ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! sendrecv.",
-                        audio_src
-                    )
-                } else {
-                    String::new()
-                };
-
-                // Note: The public Google STUN server serves as a default bootstrap fallback.
-                // In production environments, this should be provisioned dynamically via IPC signaling
-                // to prevent dependency on unmanaged external infrastructure.
-                format!(
-                    "webrtcbin name=sendrecv bundle-policy=max-bundle stun-server=stun://stun.l.google.com:19302 \
-                    {} ! application/x-rtp,media=video,encoding-name=H264,payload=96 ! sendrecv. {}",
-                    video_chain, audio_branch
-                )
-            }
-            crate::config::OutputMode::Rtp => {
-                let mut video = video_chain;
-                let mut audio = audio_src;
-                if let Some(ref srtp_key) = cfg.srtp_key {
-                    video = format!(
-                        "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
-                        video, srtp_key
-                    );
-                    if cfg.audio {
-                        audio = format!(
-                            "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
-                            audio, srtp_key
-                        );
-                    }
-                }
-
-                let audio_branch = if cfg.audio {
-                    format!(
-                        " {} ! udpsink host={} port=5006 sync=false async=false buffer-size=1048576",
-                        audio, cfg.client_host
-                    )
-                } else {
-                    String::new()
-                };
-
-                format!(
-                    "{} ! udpsink host={} port=5004 sync=false async=false buffer-size={}{}",
-                    video, cfg.client_host, udp_buf, audio_branch
-                )
+        // Apply SRTP if key is provided
+        if let Some(ref srtp_key) = cfg.srtp_key {
+            video = format!(
+                "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
+                video, srtp_key
+            );
+            if cfg.audio {
+                audio = format!(
+                    "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
+                    audio, srtp_key
+                );
             }
         }
+
+        let udp_buf = cfg.udp_buffer_size;
+
+        let audio_branch = if cfg.audio {
+            format!(
+                " {} ! udpsink host={} port=5006 sync=false async=false buffer-size=1048576",
+                audio, cfg.client_host
+            )
+        } else {
+            String::new()
+        };
+
+        format!(
+            "{} ! udpsink host={} port=5004 sync=false async=false buffer-size={}{}",
+            video, cfg.client_host, udp_buf, audio_branch
+        )
     }
 
     #[cfg(target_os = "linux")]
