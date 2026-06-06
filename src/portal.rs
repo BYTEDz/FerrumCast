@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
-use ashpd::desktop::screencast::Screencast;
+use ashpd::desktop::PersistMode;
+use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
 use std::os::fd::IntoRawFd;
 use tokio::sync::broadcast::Sender;
 use tracing::info;
@@ -14,7 +15,7 @@ pub struct PortalCapture {
     pub node_id: u32,
     pub fd: i32,
     pub restore_token: Option<String>,
-    _session: ashpd::desktop::Session<ashpd::desktop::screencast::Screencast>,
+    _session: ashpd::desktop::Session<'static, ashpd::desktop::screencast::Screencast<'static>>,
 }
 
 /// Establishes a screen capture session via the XDG Desktop Portal.
@@ -32,12 +33,16 @@ pub async fn request_screencast(
     );
 
     let proxy = Screencast::new().await?;
-    let session = proxy.create_session(ashpd::desktop::CreateSessionOptions::default()).await?;
+    let session = proxy.create_session().await?;
 
     proxy
         .select_sources(
             &session,
-            ashpd::desktop::screencast::SelectSourcesOptions::default(),
+            CursorMode::Embedded,
+            SourceType::Monitor | SourceType::Window,
+            false,
+            restore_token.as_deref(),
+            PersistMode::ExplicitlyRevoked,
         )
         .await?;
 
@@ -49,7 +54,7 @@ pub async fn request_screencast(
 
     // Start the screencast stream. This triggers a system-native authorization dialog 
     // if a valid restore token is not active or available.
-    let response = proxy.start(&session, None, ashpd::desktop::screencast::StartCastOptions::default()).await?.response()?;
+    let response = proxy.start(&session, None).await?.response()?;
     let new_token = response.restore_token().map(|t| t.to_string());
 
     let stream = response
@@ -63,7 +68,7 @@ pub async fn request_screencast(
         node_id, new_token
     );
 
-    let fd = proxy.open_pipe_wire_remote(&session, ashpd::desktop::screencast::OpenPipeWireRemoteOptions::default()).await?;
+    let fd = proxy.open_pipe_wire_remote(&session).await?;
     let raw_fd = fd.into_raw_fd();
 
     Ok(PortalCapture {
