@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
-use ashpd::desktop::PersistMode;
-use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
+use ashpd::desktop::screencast::{
+    CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions,
+    StartCastOptions,
+};
+use ashpd::desktop::{CreateSessionOptions, PersistMode};
 use std::os::fd::IntoRawFd;
 use tokio::sync::broadcast::Sender;
 use tracing::info;
@@ -15,7 +18,7 @@ pub struct PortalCapture {
     pub node_id: u32,
     pub fd: i32,
     pub restore_token: Option<String>,
-    _session: ashpd::desktop::Session<'static, ashpd::desktop::screencast::Screencast<'static>>,
+    _session: ashpd::desktop::Session<ashpd::desktop::screencast::Screencast>,
 }
 
 /// Establishes a screen capture session via the XDG Desktop Portal.
@@ -33,16 +36,15 @@ pub async fn request_screencast(
     );
 
     let proxy = Screencast::new().await?;
-    let session = proxy.create_session().await?;
+    let session = proxy.create_session(CreateSessionOptions::default()).await?;
 
     proxy
         .select_sources(
             &session,
-            CursorMode::Embedded,
-            SourceType::Monitor | SourceType::Window,
-            false,
-            restore_token.as_deref(),
-            PersistMode::ExplicitlyRevoked,
+            SelectSourcesOptions::default()
+                .set_cursor_mode(Some(CursorMode::Embedded))
+                .set_restore_token(restore_token.as_deref())
+                .set_persist_mode(Some(PersistMode::ExplicitlyRevoked)),
         )
         .await?;
 
@@ -54,7 +56,7 @@ pub async fn request_screencast(
 
     // Start the screencast stream. This triggers a system-native authorization dialog 
     // if a valid restore token is not active or available.
-    let response = proxy.start(&session, None).await?.response()?;
+    let response = proxy.start(&session, None, StartCastOptions::default()).await?.response()?;
     let new_token = response.restore_token().map(|t| t.to_string());
 
     let stream = response
@@ -68,7 +70,7 @@ pub async fn request_screencast(
         node_id, new_token
     );
 
-    let fd = proxy.open_pipe_wire_remote(&session).await?;
+    let fd = proxy.open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default()).await?;
     let raw_fd = fd.into_raw_fd();
 
     Ok(PortalCapture {
