@@ -26,11 +26,26 @@ The application is architected into two clean execution domains:
 1.  **Control Plane (Rust):** Manages asynchronous system capability probing, thread-safe dynamic configuration (`ConfigStore`), the local IPC server, and XDG Desktop Portal session negotiation on Wayland.
 2.  **Data Plane (GStreamer):** Manages the physical media pipelines, orchestrating zero-copy GPU memory transitions, color conversions, real-time audio/video packaging (RTP or WebRTC), and adaptive network transmission.
 
+## Project Structure
+
+The codebase is organized to separate the control logic from the platform-specific media pipelines:
+
+- `src/main.rs`: Application entry point and CLI interface.
+- `src/config.rs`: Configuration management and the `ConfigStore`.
+- `src/ipc.rs`: IPC server implementation for out-of-process control.
+- `src/portal.rs`: Wayland session negotiation via XDG Desktop Portal.
+- `src/stream.rs`: High-level streaming orchestration.
+- `src/pipeline/`: GStreamer pipeline implementations.
+    - `generic.rs`: Common pipeline utilities and base logic.
+    - `linux.rs`: Linux-specific capture and encoding pipelines.
+    - `windows.rs`: Windows-specific capture and encoding pipelines.
+- `src/gdi_capture.rs`: Optimized GDI software capture fallback for Windows.
+
 ## Capabilities
 
 ### Capture Backends
 *   **Windows (DXGI / Hardware):** Captures desktop frames directly from the GPU via the DXGI Desktop Duplication API (`d3d11screencapturesrc`). Direct3D 11 textures are kept inside GPU memory to maximize performance and minimize CPU overhead.
-*   **Windows (GDI / Software Fallback):** Executes an optimized, background-worker grab loop (`BitBlt`) feeding a GStreamer `appsrc`. This loop targets ~30 FPS, overlays the system cursor with accurate hotspot alignments, and implements strict resource disposal to prevent GDI handle leaks.
+*   **Windows (GDI / Software Fallback):** Executes an optimized, background-worker grab loop (`BitBlt`) feeding a GStreamer `appsrc`. This loop targets ~30 FPS, overlays the system cursor with accurate hotspot alignments, and implements strict resource disposal to prevent GDI handle leaks. This mode is automatically triggered on Windows Virtual Machines (detected via CPUID) to prevent black frames caused by DXGI's lack of virtual GPU support.
 *   **Linux (Wayland):** Negotiates screen capture via the XDG Desktop Portal and `ashpd`. This outputs a PipeWire stream node and file descriptor which are dynamically bound to a `pipewiresrc` element.
 *   **Linux (X11):** Captures frames from the root window using `ximagesrc` with the XDamage extension enabled to optimize redraw cycles.
 
@@ -48,8 +63,8 @@ At startup, `ferrumcast` queries the GStreamer registry to identify and prioriti
 *   **VideoLAN x264:** `x264enc` (universal software encoder fallback)
 
 ### Network Transport Protocols
-*   **WebRTC:** Supports complete peer negotiation (SDP and ICE candidate exchange) in-pipeline via `webrtcbin` using a public STUN server fallback.
 *   **RTP over UDP:** Provides raw, direct, low-overhead H.264 and Opus RTP streaming straight to a target receiver port.
+*   **SRTP (Secure RTP):** Supports encrypted transmission using the Secure Real-time Transport Protocol (SRTP) with AES-128-ICM and HMAC-SHA1-80, configurable via the `--srtp-key` argument.
 
 ## Deployment & Dependencies
 
@@ -103,6 +118,7 @@ At startup, the daemon can be configured with the following command-line argumen
 
 #### Advanced Encoder Tuning
 *   `--bitrate <kbps>`: Target encoding bitrate (defaults to `6000` kbps).
+*   `--srtp-key <hex>`: Configures SRTP encryption for the stream using a concatenated master key and salt.
 *   `--rc-mode <mode>`: Chooses the encoder's rate control algorithm (`cbr`, `vbr`, `cqp`).
 *   `--cqp-value <val>`: Constant Quantization Parameter value (active only when `rc_mode` is `cqp`).
 *   `--key-int-max <val>`: Maximum keyframe interval (GOP length) in frames (defaults to `60`).
@@ -139,18 +155,6 @@ Control applications manage the engine out-of-process via an IPC socket:
 Communication consists of single-line, newline-delimited (`\n`) JSON payloads. Payload processing is strictly bounded to a maximum read length of 1MB per line to mitigate Denial of Service (DoS) and Out-Of-Memory (OOM) vulnerabilities.
 
 ### Inbound Messages (Control Plane Input)
-*   `SET_REMOTE_SDP`:
-    ```json
-    { "type": "SET_REMOTE_SDP", "sdp": "...SDP TEXT...", "sdp_type": "answer" }
-    ```
-*   `ADD_ICE_CANDIDATE`:
-    ```json
-    { "type": "ADD_ICE_CANDIDATE", "candidate": "...", "sdpMid": null, "sdpMLineIndex": 0 }
-    ```
-*   `REQUEST_OFFER`:
-    ```json
-    { "type": "REQUEST_OFFER" }
-    ```
 *   `STOP_STREAM`: Set the GStreamer pipeline to the `NULL` state, pausing capture but leaving the IPC daemon active.
     ```json
     { "type": "STOP_STREAM" }
@@ -173,14 +177,6 @@ Communication consists of single-line, newline-delimited (`\n`) JSON payloads. P
     ```
 
 ### Outbound Messages (Control Plane Output)
-*   `LOCAL_SDP_GENERATED`: Dispatches local WebRTC SDP offers for signaling.
-    ```json
-    { "type": "LOCAL_SDP_GENERATED", "sdp": "...SDP...", "sdp_type": "offer" }
-    ```
-*   `LOCAL_ICE_CANDIDATE`: Dispatches gathered local ICE candidates.
-    ```json
-    { "type": "LOCAL_ICE_CANDIDATE", "candidate": "...", "sdpMid": null, "sdpMLineIndex": 0 }
-    ```
 *   `CAPABILITIES_RESPONSE`: Returns verified system video encoder cap elements.
     ```json
     { "type": "CAPABILITIES_RESPONSE", "encoders": ["nvenc", "x264"] }
