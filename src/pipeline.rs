@@ -32,7 +32,7 @@ impl PipelineBuilder {
         }
 
         #[cfg(target_os = "windows")]
-        let video_src = self::sys::video_source(ctx, use_gdi);
+        let video_src = self::sys::video_source(ctx, use_gdi, cfg.show_cursor);
         #[cfg(not(target_os = "windows"))]
         let video_src = self::sys::video_source(ctx, cfg.show_cursor);
 

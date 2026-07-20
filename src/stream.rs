@@ -5,17 +5,18 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use tracing::info;
 
-
 pub struct StreamManager {
     pipeline: Mutex<gst::Pipeline>,
     active_encoder: Mutex<String>,
     #[cfg(target_os = "windows")]
     gdi_capture_running: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    outbound_tx: tokio::sync::broadcast::Sender<crate::ipc::OutboundMessage>,
 }
 
 impl StreamManager {
     pub fn new(
         pipeline_str: &str,
+        outbound_tx: tokio::sync::broadcast::Sender<crate::ipc::OutboundMessage>,
     ) -> Result<Self> {
         let pipeline = gst::parse::launch(pipeline_str)?
             .dynamic_cast::<gst::Pipeline>()
@@ -35,12 +36,55 @@ impl StreamManager {
             gdi_capture_running = Some(crate::gdi_capture::start_gdi_capture(appsrc));
         }
 
-        Ok(Self {
+        let manager = Self {
             pipeline: Mutex::new(pipeline),
             active_encoder: Mutex::new(active_encoder),
             #[cfg(target_os = "windows")]
             gdi_capture_running: Mutex::new(gdi_capture_running),
-        })
+            outbound_tx,
+        };
+
+        manager.spawn_bus_listener(&manager.pipeline.lock());
+
+        Ok(manager)
+    }
+
+    fn spawn_bus_listener(&self, pipeline: &gst::Pipeline) {
+        let bus = match pipeline.bus() {
+            Some(b) => b,
+            None => return,
+        };
+        let tx = self.outbound_tx.clone();
+        std::thread::spawn(move || {
+            while let Some(msg) = bus.timed_pop(gst::ClockTime::NONE) {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Error(err) => {
+                        let src = err.src().map(|s| s.path_string().to_string()).unwrap_or_else(|| "unknown".into());
+                        let error_msg = format!(
+                            "Error from element {}: {} | Debug context: {:?}",
+                            src,
+                            err.error(),
+                            err.debug()
+                        );
+                        tracing::error!("{}", error_msg);
+                        let _ = tx.send(crate::ipc::OutboundMessage::StreamError {
+                            message: error_msg,
+                        });
+                        break;
+                    }
+                    MessageView::Warning(warn) => {
+                        let src = warn.src().map(|s| s.path_string().to_string()).unwrap_or_else(|| "unknown".into());
+                        tracing::warn!("Warning from element {}: {} ({:?})", src, warn.error(), warn.debug());
+                    }
+                    MessageView::Eos(_) => {
+                        tracing::info!("End of stream reached");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
     }
 
     pub fn active_encoder(&self) -> String {
@@ -80,6 +124,8 @@ impl StreamManager {
             let appsrc = src.downcast::<gstreamer_app::AppSrc>().unwrap();
             *self.gdi_capture_running.lock() = Some(crate::gdi_capture::start_gdi_capture(appsrc));
         }
+
+        self.spawn_bus_listener(&pipeline);
 
         info!("pipeline restarted successfully");
         Ok(())

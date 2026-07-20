@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
 
     info!("pipeline: {}", pipeline_str);
 
-    let stream_manager = match stream::StreamManager::new(&pipeline_str) {
+    let stream_manager = match stream::StreamManager::new(&pipeline_str, outbound_tx.clone()) {
         Ok(m) => Arc::new(m),
         Err(e) => {
             error!("failed to init stream: {}", e);

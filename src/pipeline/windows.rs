@@ -1,6 +1,6 @@
 use crate::pipeline::PlatformContext;
 
-pub fn video_source(_ctx: &PlatformContext, gdi: bool) -> String {
+pub fn video_source(_ctx: &PlatformContext, gdi: bool, show_cursor: bool) -> String {
     if gdi {
         // Fallback capture source using GDI BitBlt transfers, where frames are pushed 
         // by a background worker thread into GStreamer via a custom appsrc.
@@ -9,8 +9,10 @@ pub fn video_source(_ctx: &PlatformContext, gdi: bool) -> String {
     } else {
         // Hardware-accelerated capture via DXGI Desktop Duplication, retaining 
         // Direct3D 11 textures in GPU memory to maximize throughput.
-        "d3d11screencapturesrc ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! d3d11convert"
-            .to_string()
+        format!(
+            "d3d11screencapturesrc show-cursor={} ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! d3d11convert",
+            if show_cursor { "true" } else { "false" }
+        )
     }
 }
 

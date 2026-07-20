@@ -144,16 +144,25 @@ impl ResolvedEncoder {
                 let rc = if is_cqp { "cqp" } else { cfg.rc_mode.as_str() };
                 if is_cqp {
                     format!(
-                        "qpi={cqp} target-usage={tu} rc-method={rc} key-int-max={key_int} \
+                        "qpi={cqp} qpp={cqp} qpb={cqp} target-usage={tu} rate-control={rc} gop-size={key_int} \
                         b-frames={bframes} ref-frames={ref_frames} low-latency=true",
                         cqp = cfg.cqp_value,
                         tu = cfg.qsv_target_usage,
+                        rc = rc,
+                        key_int = key_int,
+                        bframes = bframes,
+                        ref_frames = ref_frames,
                     )
                 } else {
                     format!(
-                        "bitrate={bitrate} target-usage={tu} rc-method={rc} key-int-max={key_int} \
+                        "bitrate={bitrate} target-usage={tu} rate-control={rc} gop-size={key_int} \
                         b-frames={bframes} ref-frames={ref_frames} low-latency=true",
+                        bitrate = bitrate,
                         tu = cfg.qsv_target_usage,
+                        rc = rc,
+                        key_int = key_int,
+                        bframes = bframes,
+                        ref_frames = ref_frames,
                     )
                 }
             }
@@ -258,7 +267,6 @@ pub struct StreamConfig {
     /// Show cursor in X11 ximagesrc captures.
     #[serde(default = "default_show_cursor")]
     pub show_cursor: bool,
-    /// GStreamer colorimetry tag: bt709, bt601, bt2020.
     /// GStreamer colorimetry tag: bt709, bt601, bt2020.
     #[serde(default = "default_colorimetry")]
     pub colorimetry: String,

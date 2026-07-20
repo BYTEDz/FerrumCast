@@ -1,6 +1,4 @@
 #[cfg(target_os = "windows")]
-use gst::prelude::*;
-#[cfg(target_os = "windows")]
 use gstreamer as gst;
 #[cfg(target_os = "windows")]
 use gstreamer_app as gst_app;
