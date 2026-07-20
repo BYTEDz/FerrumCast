@@ -1,5 +1,7 @@
-use crate::config::{Capabilities, ResolvedEncoder, StreamConfig};
+use crate::config::{Capabilities, StreamConfig};
 use tracing::info;
+
+pub mod encoders;
 
 #[derive(Debug, Clone, Default)]
 pub struct PlatformContext {
@@ -12,19 +14,16 @@ pub struct PipelineBuilder;
 impl PipelineBuilder {
     pub fn build_pipeline(
         cfg: &StreamConfig,
-        enc: &ResolvedEncoder,
+        enc: &dyn encoders::VideoEncoder,
         ctx: &PlatformContext,
     ) -> String {
-        let is_hw = !matches!(enc, ResolvedEncoder::X264);
+        let is_hw = enc.is_hardware();
         let is_vm = detect_hypervisor();
 
         // On Windows-based virtual machines lacking GPU passthrough, DXGI-based desktop duplication
         // (d3d11screencapturesrc) yields a black frame. Fall back to GDI screen capture under these
         // hypervisor conditions when software-based fallback encoders are selected.
-        let is_hw_encoder = matches!(
-            enc,
-            ResolvedEncoder::Nvenc | ResolvedEncoder::Qsv | ResolvedEncoder::Amf
-        );
+        let is_hw_encoder = enc.is_gpu_asic();
         let use_gdi = cfg.gdi || (is_vm && !is_hw_encoder);
 
         if use_gdi && cfg!(target_os = "windows") {
@@ -42,32 +41,27 @@ impl PipelineBuilder {
                 // for a Direct3D 11 download stage.
                 ("videoconvert n-threads=0", None, false)
             } else {
-                match enc {
-                    ResolvedEncoder::Nvenc | ResolvedEncoder::Qsv | ResolvedEncoder::Amf => {
-                        // Bind the pipeline to the GPU memory domain to maintain hardware-accelerated execution.
-                        (
-                            "d3d11convert",
-                            Some("video/x-raw(memory:D3D11Memory)"),
-                            true,
-                        )
-                    }
-                    _ => {
-                        // Software-based streams and Media Foundation fallbacks require transferring
-                        // frame buffers from GPU memory spaces back to standard host system memory.
-                        ("d3d11download ! videoconvert n-threads=0", None, false)
-                    }
+                if enc.is_gpu_asic() {
+                    // Bind the pipeline to the GPU memory domain to maintain hardware-accelerated execution.
+                    (
+                        "d3d11convert",
+                        Some("video/x-raw(memory:D3D11Memory)"),
+                        true,
+                    )
+                } else {
+                    // Software-based streams and Media Foundation fallbacks require transferring
+                    // frame buffers from GPU memory spaces back to standard host system memory.
+                    ("d3d11download ! videoconvert n-threads=0", None, false)
                 }
             }
         } else {
             // FIX: Enable Zero-Copy on Linux for Wayland/PipeWire DMA-BUFs!
-            match enc {
-                ResolvedEncoder::VaH264 => {
-                    ("vapostproc", Some("video/x-raw(memory:VAMemory)"), true)
-                }
-                ResolvedEncoder::Nvenc => {
-                    ("glcolorconvert", Some("video/x-raw(memory:GLMemory)"), true)
-                }
-                _ => ("videoconvert n-threads=0", None, false),
+            if enc.gst_element() == "vah264enc" {
+                ("vapostproc", Some("video/x-raw(memory:VAMemory)"), true)
+            } else if enc.gst_element() == "nvh264enc" {
+                ("glcolorconvert", Some("video/x-raw(memory:GLMemory)"), true)
+            } else {
+                ("videoconvert n-threads=0", None, false)
             }
         };
 

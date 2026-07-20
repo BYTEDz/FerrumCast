@@ -138,8 +138,8 @@ async fn main() -> Result<()> {
     });
 
     let initial_cfg = config_store.get();
-    let enc = config::resolve_encoder(&initial_cfg.encoder, &caps);
-    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(&initial_cfg, &enc, &platform_ctx);
+    let enc = pipeline::encoders::resolve_encoder(&initial_cfg.encoder, &caps);
+    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(&initial_cfg, enc.as_ref(), &platform_ctx);
 
     info!("pipeline: {}", pipeline_str);
 
@@ -186,10 +186,10 @@ async fn main() -> Result<()> {
                                 );
                                 config.set(cfg.clone());
 
-                                let enc = config::resolve_encoder(&cfg.encoder, &caps);
+                                let enc = pipeline::encoders::resolve_encoder(&cfg.encoder, &caps);
                                 let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
                                     &cfg,
-                                    &enc,
+                                    enc.as_ref(),
                                     &platform_ctx,
                                 );
 
