@@ -35,38 +35,63 @@ impl PipelineBuilder {
         #[cfg(not(target_os = "windows"))]
         let video_src = self::sys::video_source(ctx, cfg.show_cursor);
 
-        let (converter, mem_feature, skip_videoscale) = if cfg!(target_os = "windows") {
+        let (converter, caps) = if cfg!(target_os = "windows") {
             if use_gdi {
                 // GDI capture buffers reside in host system memory (BGR), bypassing the need
                 // for a Direct3D 11 download stage.
-                ("videoconvert n-threads=0", None, false)
+                let conv = "videoconvert n-threads=0".to_string();
+                let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, None, false);
+                (conv, c)
             } else {
                 if enc.is_gpu_asic() {
                     // Bind the pipeline to the GPU memory domain to maintain hardware-accelerated execution.
-                    (
-                        "d3d11convert",
-                        Some("video/x-raw(memory:D3D11Memory)"),
-                        true,
-                    )
+                    let conv = "d3d11convert".to_string();
+                    let mem_feature = Some("video/x-raw(memory:D3D11Memory)");
+                    let c =
+                        self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature, true);
+                    (conv, c)
                 } else {
-                    // Software-based streams and Media Foundation fallbacks require transferring
-                    // frame buffers from GPU memory spaces back to standard host system memory.
-                    ("d3d11download ! videoconvert n-threads=0", None, false)
+                    // GPU-Accelerated Scaling & Color Conversion:
+                    // Perform resizing and NV12 color conversion entirely on the GPU inside D3D11 Memory.
+                    let target_format = enc.pre_caps().unwrap_or("NV12");
+                    let gpu_mem_feature = Some("video/x-raw(memory:D3D11Memory)");
+                    let gpu_caps = self::generic::scale_caps(
+                        cfg,
+                        Some(target_format),
+                        true,
+                        gpu_mem_feature,
+                        true,
+                    );
+
+                    let conv = format!(
+                        "d3d11convert ! {}d3d11download ! videoconvert n-threads=0",
+                        gpu_caps
+                    );
+                    let c = format!("video/x-raw,format={} ! ", target_format);
+                    (conv, c)
                 }
             }
         } else {
-            // FIX: Enable Zero-Copy on Linux for Wayland/PipeWire DMA-BUFs!
-            if enc.gst_element() == "vah264enc" {
-                ("vapostproc", Some("video/x-raw(memory:VAMemory)"), true)
+            // Linux path
+            let mem_feature = if enc.gst_element() == "vah264enc" {
+                Some("video/x-raw(memory:VAMemory)")
             } else if enc.gst_element() == "nvh264enc" {
-                ("glcolorconvert", Some("video/x-raw(memory:GLMemory)"), true)
+                Some("video/x-raw(memory:GLMemory)")
             } else {
-                ("videoconvert n-threads=0", None, false)
-            }
-        };
+                None
+            };
 
-        let caps =
-            self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature, skip_videoscale);
+            let conv = if enc.gst_element() == "vah264enc" {
+                "vapostproc".to_string()
+            } else if enc.gst_element() == "nvh264enc" {
+                "glcolorconvert".to_string()
+            } else {
+                "videoconvert n-threads=0".to_string()
+            };
+
+            let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature, false);
+            (conv, c)
+        };
 
         let qbufs = cfg.queue_max_buffers;
         let qtime = cfg.queue_max_time_ns;
