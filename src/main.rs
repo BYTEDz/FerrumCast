@@ -17,6 +17,8 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 const TOKEN_FILE: &str = "/tmp/ferrumcast.token";
 
+const VERSION: &str = env!("FERRUMCAST_VERSION");
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Enable system-level DPI awareness on Windows to prevent coordinate scaling or virtualization issues.
@@ -35,7 +37,7 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    info!("starting ferrumcast engine");
+    info!("starting ferrumcast engine v{}", VERSION);
 
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--probe") {

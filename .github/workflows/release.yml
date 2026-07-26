@@ -1,0 +1,25 @@
+changelog:
+  categories:
+    - title: "Features & Enhancements"
+      labels:
+        - "feature"
+        - "enhancement"
+    - title: "Bug Fixes"
+      labels:
+        - "bug"
+        - "fix"
+    - title: "Performance & Optimizations"
+      labels:
+        - "performance"
+    - title: "Refactoring & Internal Changes"
+      labels:
+        - "refactor"
+        - "internal"
+    - title: "Maintenance & CI"
+      labels:
+        - "chore"
+        - "documentation"
+        - "ci"
+  exclude:
+    labels:
+      - "ignore-release"
