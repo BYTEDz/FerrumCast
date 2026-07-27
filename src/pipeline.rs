@@ -3,10 +3,18 @@ use tracing::info;
 
 pub mod encoders;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct PlatformContext {
     #[cfg(target_os = "linux")]
     pub portal_info: Option<(u32, i32)>,
+    #[cfg(target_os = "linux")]
+    pub portal_capture: Option<std::sync::Arc<crate::portal::PortalCapture>>,
+}
+
+impl std::fmt::Debug for PlatformContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlatformContext").finish()
+    }
 }
 
 pub struct PipelineBuilder;

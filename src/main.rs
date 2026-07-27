@@ -1,6 +1,7 @@
 mod config;
 #[cfg(target_os = "windows")]
 mod gdi_capture;
+mod input;
 mod ipc;
 mod pipeline;
 mod stream;
@@ -134,14 +135,19 @@ async fn main() -> Result<()> {
         None
     };
 
+    let portal_capture_arc = portal_capture.map(Arc::new);
+
     let platform_ctx = Arc::new(pipeline::PlatformContext {
         #[cfg(target_os = "linux")]
-        portal_info: portal_capture.as_ref().map(|c| (c.node_id, c.fd)),
+        portal_info: portal_capture_arc.as_ref().map(|c| (c.node_id, c.fd)),
+        #[cfg(target_os = "linux")]
+        portal_capture: portal_capture_arc.clone(),
     });
 
     let initial_cfg = config_store.get();
     let enc = pipeline::encoders::resolve_encoder(&initial_cfg.encoder, &caps);
-    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(&initial_cfg, enc.as_ref(), &platform_ctx);
+    let pipeline_str =
+        pipeline::PipelineBuilder::build_pipeline(&initial_cfg, enc.as_ref(), &platform_ctx);
 
     info!("pipeline: {}", pipeline_str);
 
@@ -228,6 +234,17 @@ async fn main() -> Result<()> {
                             ipc::InboundMessage::ForceKeyframe => {
                                 let _ = stream.force_keyframe();
                             }
+                            ipc::InboundMessage::MouseInput(ref input) => {
+                                info!("IPC received MouseInput: {:?}", input);
+                                #[cfg(target_os = "windows")]
+                                input::handle_mouse_windows(input);
+                                #[cfg(target_os = "linux")]
+                                if let Some(ref portal) = platform_ctx.portal_capture {
+                                    portal.handle_mouse_input(input).await;
+                                } else {
+                                    tracing::warn!("MouseInput received but no active Linux portal capture instance");
+                                }
+                            }
                         }
                     }
                 },
@@ -242,7 +259,7 @@ async fn main() -> Result<()> {
     // Explicitly bind the lifetime of the portal capture context to the application lifetime
     // to prevent RAII cleanup from dropping the D-Bus session and terminating the stream.
     #[cfg(target_os = "linux")]
-    let _keep_portal = portal_capture;
+    let _keep_portal = portal_capture_arc;
 
     tokio::signal::ctrl_c().await?;
     info!("shutting down");

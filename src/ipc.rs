@@ -17,6 +17,8 @@ pub enum InboundMessage {
     GetCapabilities,
     RestartPipeline(StreamConfig),
     ForceKeyframe,
+    #[serde(untagged)]
+    MouseInput(crate::input::MouseInput),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
