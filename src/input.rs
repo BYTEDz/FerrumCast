@@ -150,9 +150,9 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                     MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, 0),
                     MouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, 0),
                     MouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, 0),
-                    MouseButton::Back => (MOUSEEVENTF_XDOWN, XBUTTON1.0 as u32),
-                    MouseButton::Forward => (MOUSEEVENTF_XDOWN, XBUTTON2.0 as u32),
-                    MouseButton::Task => (MOUSEEVENTF_XDOWN, XBUTTON2.0 as u32),
+                    MouseButton::Back => (MOUSEEVENTF_XDOWN, 1u32),
+                    MouseButton::Forward => (MOUSEEVENTF_XDOWN, 2u32),
+                    MouseButton::Task => (MOUSEEVENTF_XDOWN, 2u32),
                     MouseButton::Extra(val) => (MOUSEEVENTF_XDOWN, *val as u32),
                 };
                 let input = INPUT {
@@ -175,9 +175,9 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                     MouseButton::Left => (MOUSEEVENTF_LEFTUP, 0),
                     MouseButton::Right => (MOUSEEVENTF_RIGHTUP, 0),
                     MouseButton::Middle => (MOUSEEVENTF_MIDDLEUP, 0),
-                    MouseButton::Back => (MOUSEEVENTF_XUP, XBUTTON1.0 as u32),
-                    MouseButton::Forward => (MOUSEEVENTF_XUP, XBUTTON2.0 as u32),
-                    MouseButton::Task => (MOUSEEVENTF_XUP, XBUTTON2.0 as u32),
+                    MouseButton::Back => (MOUSEEVENTF_XUP, 1u32),
+                    MouseButton::Forward => (MOUSEEVENTF_XUP, 2u32),
+                    MouseButton::Task => (MOUSEEVENTF_XUP, 2u32),
                     MouseButton::Extra(val) => (MOUSEEVENTF_XUP, *val as u32),
                 };
                 let input = INPUT {
@@ -220,7 +220,7 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                             mi: MOUSEINPUT {
                                 dx: 0,
                                 dy: 0,
-                                mouseData: (*delta_y * WHEEL_DELTA as f64) as u32,
+                                mouseData: (*delta_y * 120.0) as u32,
                                 dwFlags: MOUSEEVENTF_WHEEL,
                                 time: 0,
                                 dwExtraInfo: 0,
@@ -236,7 +236,7 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                             mi: MOUSEINPUT {
                                 dx: 0,
                                 dy: 0,
-                                mouseData: (*delta_x * WHEEL_DELTA as f64) as u32,
+                                mouseData: (*delta_x * 120.0) as u32,
                                 dwFlags: MOUSEEVENTF_HWHEEL,
                                 time: 0,
                                 dwExtraInfo: 0,
@@ -254,7 +254,7 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                             ki: KEYBDINPUT {
                                 wVk: VK_CONTROL,
                                 wScan: 0,
-                                dwFlags: KEYEVENTF_ENUM(0),
+                                dwFlags: KEYBD_EVENT_FLAGS(0u32),
                                 time: 0,
                                 dwExtraInfo: 0,
                             },

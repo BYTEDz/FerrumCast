@@ -121,6 +121,7 @@ async fn main() -> Result<()> {
         None
     };
 
+    #[cfg(target_os = "linux")]
     let portal_capture_arc = portal_capture.map(Arc::new);
 
     let platform_ctx = Arc::new(pipeline::PlatformContext {
