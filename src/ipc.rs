@@ -24,16 +24,10 @@ pub enum InboundMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OutboundMessage {
-    StreamError {
-        message: String,
-    },
+    StreamError { message: String },
     CapabilitiesResponse(Capabilities),
-    ConfigAck {
-        active_encoder: String,
-    },
-    PortalTokenGenerated {
-        token: String,
-    },
+    ConfigAck { active_encoder: String },
+    PortalTokenGenerated { token: String },
     WaitingForPortalApproval,
 }
 
@@ -157,10 +151,21 @@ impl IpcServer {
             };
 
             let write_task = async {
-                while let Ok(msg) = global_rx.recv().await {
-                    if let Ok(mut data) = serde_json::to_vec(&msg) {
-                        data.push(b'\n');
-                        if writer.write_all(&data).await.is_err() {
+                loop {
+                    match global_rx.recv().await {
+                        Ok(msg) => {
+                            if let Ok(mut data) = serde_json::to_vec(&msg) {
+                                data.push(b'\n');
+                                if writer.write_all(&data).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("IPC write task lagged by {} messages", n);
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             break;
                         }
                     }
