@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
 use ashpd::desktop::remote_desktop::{
-    DeviceType, NotifyPointerAxisOptions, NotifyPointerButtonOptions, NotifyPointerMotionAbsoluteOptions,
-    NotifyPointerMotionOptions, RemoteDesktop, SelectDevicesOptions,
+    DeviceType, NotifyPointerAxisOptions, NotifyPointerButtonOptions,
+    NotifyPointerMotionAbsoluteOptions, NotifyPointerMotionOptions, RemoteDesktop,
+    SelectDevicesOptions,
 };
 use ashpd::desktop::screencast::{
     CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, StartCastOptions,
@@ -9,7 +10,7 @@ use ashpd::desktop::screencast::{
 use ashpd::desktop::{CreateSessionOptions, PersistMode};
 use std::os::fd::IntoRawFd;
 use tokio::sync::broadcast::Sender;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::input::{MouseGesture, MouseInput, mouse_button_to_linux_code};
 use crate::ipc::OutboundMessage;
@@ -34,19 +35,22 @@ impl PortalCapture {
             }
         };
 
-        info!("Portal processing mouse input: {:?}", input);
+        debug!("Portal processing mouse input: {:?}", input);
 
         match input {
             MouseInput::Move { x, y, absolute } => {
                 if *absolute {
                     let opts = NotifyPointerMotionAbsoluteOptions::default();
-                    if let Err(e) = rd.notify_pointer_motion_absolute(session, 0, *x, *y, opts).await {
-                        warn!("Portal notify_pointer_motion_absolute error: {}", e);
+                    if let Err(e) = rd
+                        .notify_pointer_motion_absolute(session, self.node_id, *x, *y, opts)
+                        .await
+                    {
+                        debug!("Portal notify_pointer_motion_absolute error: {}", e);
                     }
                 } else {
                     let opts = NotifyPointerMotionOptions::default();
                     if let Err(e) = rd.notify_pointer_motion(session, *x, *y, opts).await {
-                        warn!("Portal notify_pointer_motion error: {}", e);
+                        debug!("Portal notify_pointer_motion error: {}", e);
                     }
                 }
             }
@@ -131,7 +135,14 @@ impl PortalCapture {
             MouseInput::Gesture(gesture) => match gesture {
                 MouseGesture::Pinch { scale } => {
                     let opts = NotifyPointerAxisOptions::default();
-                    let _ = rd.notify_pointer_axis(session, 0.0, if *scale > 1.0 { 1.0 } else { -1.0 }, opts).await;
+                    let _ = rd
+                        .notify_pointer_axis(
+                            session,
+                            0.0,
+                            if *scale > 1.0 { 1.0 } else { -1.0 },
+                            opts,
+                        )
+                        .await;
                 }
                 MouseGesture::TwoFingerScroll { dx, dy } => {
                     let opts = NotifyPointerAxisOptions::default();
@@ -143,7 +154,14 @@ impl PortalCapture {
                 }
                 MouseGesture::Rotate { angle } => {
                     let opts = NotifyPointerAxisOptions::default();
-                    let _ = rd.notify_pointer_axis(session, if *angle > 0.0 { 1.0 } else { -1.0 }, 0.0, opts).await;
+                    let _ = rd
+                        .notify_pointer_axis(
+                            session,
+                            if *angle > 0.0 { 1.0 } else { -1.0 },
+                            0.0,
+                            opts,
+                        )
+                        .await;
                 }
             },
         }
@@ -161,7 +179,9 @@ pub async fn request_screencast(
     );
 
     let screencast_proxy = Screencast::new().await?;
-    let screencast_session = screencast_proxy.create_session(CreateSessionOptions::default()).await?;
+    let screencast_session = screencast_proxy
+        .create_session(CreateSessionOptions::default())
+        .await?;
 
     screencast_proxy
         .select_sources(
@@ -179,7 +199,10 @@ pub async fn request_screencast(
         }
     }
 
-    let response = screencast_proxy.start(&screencast_session, None, StartCastOptions::default()).await?.response()?;
+    let response = screencast_proxy
+        .start(&screencast_session, None, StartCastOptions::default())
+        .await?
+        .response()?;
     let new_token = response.restore_token().map(|t| t.to_string());
 
     let stream = response
@@ -193,7 +216,9 @@ pub async fn request_screencast(
         node_id, new_token
     );
 
-    let fd = screencast_proxy.open_pipe_wire_remote(&screencast_session, OpenPipeWireRemoteOptions::default()).await?;
+    let fd = screencast_proxy
+        .open_pipe_wire_remote(&screencast_session, OpenPipeWireRemoteOptions::default())
+        .await?;
     let raw_fd = fd.into_raw_fd();
 
     // Initialize and start RemoteDesktop session for input permission
@@ -203,10 +228,19 @@ pub async fn request_screencast(
                 let opts = SelectDevicesOptions::default()
                     .set_devices(ashpd::enumflags2::BitFlags::from(DeviceType::Pointer));
                 let _ = rd.select_devices(&sess, opts).await;
-                match rd.start(&sess, None, ashpd::desktop::remote_desktop::StartOptions::default()).await {
+                match rd
+                    .start(
+                        &sess,
+                        None,
+                        ashpd::desktop::remote_desktop::StartOptions::default(),
+                    )
+                    .await
+                {
                     Ok(resp) => {
                         if let Ok(_) = resp.response() {
-                            info!("RemoteDesktop portal session started and authorized successfully");
+                            info!(
+                                "RemoteDesktop portal session started and authorized successfully"
+                            );
                         }
                     }
                     Err(e) => warn!("RemoteDesktop start error: {}", e),

@@ -23,8 +23,6 @@ const VERSION: &str = env!("FERRUMCAST_VERSION");
 #[tokio::main]
 async fn main() -> Result<()> {
     // Enable system-level DPI awareness on Windows to prevent coordinate scaling or virtualization issues.
-    // Without this call, Windows scales down system metrics and screen sizes on high-DPI displays,
-    // which results in capturing only the upper-left portion of the window or screen.
     #[cfg(target_os = "windows")]
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
@@ -50,8 +48,6 @@ async fn main() -> Result<()> {
 
     let (outbound_tx, _outbound_rx) = tokio::sync::broadcast::channel(32);
 
-    // Configure environment variables for portable, self-contained GStreamer runtimes on Windows,
-    // allowing the engine to locate localized binaries and plugins without a system-wide installation.
     #[cfg(target_os = "windows")]
     {
         if let Ok(exe_path) = std::env::current_exe() {
@@ -65,8 +61,6 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Prepend the executable directory to the PATH environment variable
-                // to facilitate dynamic link library (DLL) resolution for localized GStreamer dependencies.
                 if let Some(path) = std::env::var_os("PATH") {
                     let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
                     paths.insert(0, exe_dir.to_path_buf());
@@ -80,17 +74,13 @@ async fn main() -> Result<()> {
         }
     }
 
-    // GStreamer global state initialization must precede any GObject inspections,
-    // registry queries, or pipeline parsing operations.
     gstreamer::init().expect("Failed to initialize gstreamer");
 
     let caps = Arc::new(pipeline::PipelineBuilder::probe_capabilities());
     info!("available encoders: {:?}", caps.encoders);
 
-    // Initialize the configuration registry, pre-seeded with CLI parameters from the orchestrator layer.
     let config_store = Arc::new(config::ConfigStore::new_from_args());
 
-    // Retrieve the screen-capture token, falling back to local persistent storage if not provided in args.
     #[cfg(target_os = "linux")]
     let initial_token = {
         let cfg = config_store.get();
@@ -106,20 +96,16 @@ async fn main() -> Result<()> {
     #[cfg(target_os = "windows")]
     let ipc_path = r"\\.\pipe\ferrumcast";
 
-    // Unlink the legacy Unix domain socket path to prevent binding failures (EADDRINUSE).
     #[cfg(target_os = "linux")]
     let _ = std::fs::remove_file(ipc_path);
 
     info!("binding IPC to {}", ipc_path);
     let server = Arc::new(ipc::IpcServer::new(ipc_path));
 
-    // Under Wayland, negotiate screen-cast authorization with the XDG Desktop Portal to
-    // obtain the required file descriptor and PipeWire node identifier.
     #[cfg(target_os = "linux")]
     let portal_capture = if pipeline::PipelineBuilder::is_wayland() {
         match portal::request_screencast(initial_token, Some(outbound_tx.clone())).await {
             Ok(c) => {
-                // Cache the restore token to allow silent session resumption in future instances.
                 if let Some(ref t) = c.restore_token {
                     info!("persisting portal token to {}", TOKEN_FILE);
                     let _ = std::fs::write(TOKEN_FILE, t);
@@ -235,14 +221,18 @@ async fn main() -> Result<()> {
                                 let _ = stream.force_keyframe();
                             }
                             ipc::InboundMessage::MouseInput(ref input) => {
-                                info!("IPC received MouseInput: {:?}", input);
+                                tracing::debug!("IPC received MouseInput: {:?}", input);
                                 #[cfg(target_os = "windows")]
                                 input::handle_mouse_windows(input);
                                 #[cfg(target_os = "linux")]
                                 if let Some(ref portal) = platform_ctx.portal_capture {
-                                    portal.handle_mouse_input(input).await;
+                                    let portal = portal.clone();
+                                    let input = input.clone();
+                                    tokio::spawn(async move {
+                                        portal.handle_mouse_input(&input).await;
+                                    });
                                 } else {
-                                    tracing::warn!("MouseInput received but no active Linux portal capture instance");
+                                    tracing::warn!("{}", input::loc::MSG_NO_ACTIVE_PORTAL);
                                 }
                             }
                         }
@@ -256,8 +246,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Explicitly bind the lifetime of the portal capture context to the application lifetime
-    // to prevent RAII cleanup from dropping the D-Bus session and terminating the stream.
     #[cfg(target_os = "linux")]
     let _keep_portal = portal_capture_arc;
 

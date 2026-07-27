@@ -6,6 +6,7 @@ pub mod loc {
     pub const MSG_MOUSE_INPUT_SUCCESS: &str = "mouse_input_success";
     pub const MSG_MOUSE_INPUT_FAILED: &str = "mouse_input_failed";
     pub const MSG_PORTAL_NOT_AVAILABLE: &str = "portal_remote_desktop_not_available";
+    pub const MSG_NO_ACTIVE_PORTAL: &str = "no_active_linux_portal_instance";
 }
 
 /// Represents mouse button types including primary, secondary, middle, side/thumb, and custom extra buttons.
@@ -58,6 +59,35 @@ pub fn mouse_button_to_linux_code(button: &MouseButton) -> i32 {
 }
 
 #[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(target_os = "windows")]
+static ACC_X: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "windows")]
+static ACC_Y: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "windows")]
+fn add_and_extract(acc: &AtomicU64, delta: f64) -> i32 {
+    let mut current_bits = acc.load(Ordering::Relaxed);
+    loop {
+        let current = f64::from_bits(current_bits);
+        let total = current + delta;
+        let int_part = total.trunc();
+        let rem = total - int_part;
+        let new_bits = rem.to_bits();
+        match acc.compare_exchange_weak(
+            current_bits,
+            new_bits,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return int_part as i32,
+            Err(actual) => current_bits = actual,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 pub fn handle_mouse_windows(input: &MouseInput) {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
@@ -65,32 +95,55 @@ pub fn handle_mouse_windows(input: &MouseInput) {
     unsafe {
         match input {
             MouseInput::Move { x, y, absolute } => {
-                let mut flags = MOUSEEVENTF_MOVE;
-                let (dx, dy) = if *absolute {
-                    flags |= MOUSEEVENTF_ABSOLUTE;
+                if *absolute {
+                    ACC_X.store(0f64.to_bits(), Ordering::Relaxed);
+                    ACC_Y.store(0f64.to_bits(), Ordering::Relaxed);
+
                     let sw = GetSystemMetrics(SM_CXSCREEN).max(1) as f64;
                     let sh = GetSystemMetrics(SM_CYSCREEN).max(1) as f64;
                     let abs_x = if *x <= 1.0 { *x } else { *x / sw };
                     let abs_y = if *y <= 1.0 { *y } else { *y / sh };
-                    ((abs_x * 65535.0) as i32, (abs_y * 65535.0) as i32)
-                } else {
-                    (*x as i32, *y as i32)
-                };
 
-                let input = INPUT {
-                    r#type: INPUT_MOUSE,
-                    Anonymous: INPUT_0 {
-                        mi: MOUSEINPUT {
-                            dx,
-                            dy,
-                            mouseData: 0,
-                            dwFlags: flags,
-                            time: 0,
-                            dwExtraInfo: 0,
+                    let dx = (abs_x.clamp(0.0, 1.0) * 65535.0) as i32;
+                    let dy = (abs_y.clamp(0.0, 1.0) * 65535.0) as i32;
+
+                    let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+
+                    let input_evt = INPUT {
+                        r#type: INPUT_MOUSE,
+                        Anonymous: INPUT_0 {
+                            mi: MOUSEINPUT {
+                                dx,
+                                dy,
+                                mouseData: 0,
+                                dwFlags: flags,
+                                time: 0,
+                                dwExtraInfo: 0,
+                            },
                         },
-                    },
-                };
-                SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+                    };
+                    SendInput(&[input_evt], std::mem::size_of::<INPUT>() as i32);
+                } else {
+                    let dx = add_and_extract(&ACC_X, *x);
+                    let dy = add_and_extract(&ACC_Y, *y);
+
+                    if dx != 0 || dy != 0 {
+                        let input_evt = INPUT {
+                            r#type: INPUT_MOUSE,
+                            Anonymous: INPUT_0 {
+                                mi: MOUSEINPUT {
+                                    dx,
+                                    dy,
+                                    mouseData: 0,
+                                    dwFlags: MOUSEEVENTF_MOVE,
+                                    time: 0,
+                                    dwExtraInfo: 0,
+                                },
+                            },
+                        };
+                        SendInput(&[input_evt], std::mem::size_of::<INPUT>() as i32);
+                    }
+                }
             }
             MouseInput::ButtonDown { button } => {
                 let (flags, mouse_data) = match button {
