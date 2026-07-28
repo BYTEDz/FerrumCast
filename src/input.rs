@@ -8,6 +8,7 @@ pub mod loc {
     pub const MSG_PORTAL_NOT_AVAILABLE: &str = "portal_remote_desktop_not_available";
     pub const MSG_NO_ACTIVE_PORTAL: &str = "no_active_linux_portal_instance";
     pub const MSG_SEND_INPUT_FAILED: &str = "send_input_failed";
+    pub const MSG_EXECUTING_WIN32_MOUSE: &str = "executing_win32_mouse_input";
 }
 
 /// Represents mouse button types including primary, secondary, middle, side/thumb, and custom extra buttons.
@@ -90,10 +91,13 @@ fn add_and_extract(acc: &AtomicU64, delta: f64) -> i32 {
 
 #[cfg(target_os = "windows")]
 pub fn handle_mouse_windows(input: &MouseInput) {
+    use tracing::info;
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SetCursorPos,
     };
+
+    info!("{}: {:?}", loc::MSG_EXECUTING_WIN32_MOUSE, input);
 
     unsafe {
         match input {
@@ -105,8 +109,7 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                     let sw = GetSystemMetrics(SM_CXSCREEN).max(1) as f64;
                     let sh = GetSystemMetrics(SM_CYSCREEN).max(1) as f64;
 
-                    // Properly distinguish between normalized (0.0..1.0) and pixel coordinates
-                    let (abs_x, abs_y, px, py) = if *x <= 1.0 && *y <= 1.0 && *x >= 0.0 && *y >= 0.0 && (*x > 0.0 || *y > 0.0) {
+                    let (abs_x, abs_y, px, py) = if *x <= 1.0 && *y <= 1.0 && *x >= 0.0 && *y >= 0.0 {
                         let norm_x = x.clamp(0.0, 1.0);
                         let norm_y = y.clamp(0.0, 1.0);
                         (norm_x, norm_y, (norm_x * (sw - 1.0)) as i32, (norm_y * (sh - 1.0)) as i32)

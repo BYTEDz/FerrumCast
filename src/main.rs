@@ -22,7 +22,6 @@ const VERSION: &str = env!("FERRUMCAST_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Enable system-level DPI awareness on Windows to prevent coordinate scaling or virtualization issues.
     #[cfg(target_os = "windows")]
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
@@ -170,11 +169,11 @@ async fn main() -> Result<()> {
                     let platform_ctx = platform_ctx_c.clone();
                     async move {
                         match msg {
-                            ipc::InboundMessage::StopStream => {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::StopStream) => {
                                 info!("stopping pipeline (engine stays alive)");
                                 let _ = stream.stop();
                             }
-                            ipc::InboundMessage::RestartPipeline(cfg) => {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::RestartPipeline(cfg)) => {
                                 info!(
                                     "restarting pipeline via IPC: host={} encoder={:?}",
                                     cfg.client_host, cfg.encoder
@@ -203,7 +202,7 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             }
-                            ipc::InboundMessage::ConfigureStream(cfg) => {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::ConfigureStream(cfg)) => {
                                 info!("stream config updated: bitrate={}kbps", cfg.bitrate);
                                 config.set(cfg.clone());
                                 if let Err(e) = stream.update_bitrate(cfg.bitrate) {
@@ -213,16 +212,16 @@ async fn main() -> Result<()> {
                                     active_encoder: stream.active_encoder(),
                                 });
                             }
-                            ipc::InboundMessage::GetCapabilities => {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::GetCapabilities) => {
                                 let _ = tx.send(ipc::OutboundMessage::CapabilitiesResponse(
                                     (*caps).clone(),
                                 ));
                             }
-                            ipc::InboundMessage::ForceKeyframe => {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::ForceKeyframe) => {
                                 let _ = stream.force_keyframe();
                             }
                             ipc::InboundMessage::MouseInput(ref input) => {
-                                tracing::debug!("IPC received MouseInput: {:?}", input);
+                                info!("IPC received MouseInput: {:?}", input);
                                 #[cfg(target_os = "windows")]
                                 input::handle_mouse_windows(input);
                                 #[cfg(target_os = "linux")]

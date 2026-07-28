@@ -7,17 +7,28 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+pub mod loc {
+    pub const MSG_CLIENT_CONNECTED: &str = "ipc_client_connected";
+    pub const MSG_CLIENT_DISCONNECTED: &str = "ipc_client_disconnected";
+    pub const MSG_DESERIALIZATION_FAILED: &str = "ipc_json_deserialization_failed";
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum InboundMessage {
+pub enum ControlMessage {
     StopStream,
     ConfigureStream(StreamConfig),
     GetCapabilities,
     RestartPipeline(StreamConfig),
     ForceKeyframe,
-    #[serde(untagged)]
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InboundMessage {
+    Control(ControlMessage),
     MouseInput(crate::input::MouseInput),
 }
 
@@ -61,7 +72,6 @@ impl IpcServer {
 
             let listener = UnixListener::bind(&self.path)?;
 
-            // Restrict socket permissions to the owner to prevent unauthorized local privilege escalation.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -89,7 +99,6 @@ impl IpcServer {
             use tokio::net::windows::named_pipe::ServerOptions;
             info!("IPC listening on named pipe: {}", self.path);
 
-            // Enforce the first-pipe-instance constraint on Windows to mitigate named pipe hijacking or spoofing.
             let mut server = ServerOptions::new()
                 .first_pipe_instance(true)
                 .create(&self.path)?;
@@ -97,14 +106,11 @@ impl IpcServer {
             loop {
                 if let Err(e) = server.connect().await {
                     error!("pipe connect error: {}", e);
-                    // Re-instantiate the pipe instance on failure to ensure continuous service availability.
                     server = ServerOptions::new().create(&self.path)?;
                     continue;
                 }
 
                 let connected_client = server;
-                // Pre-allocate the next pipe instance before spawning the active client task to minimize
-                // the connection-window gap and prevent dropped concurrent connection requests.
                 server = ServerOptions::new().create(&self.path)?;
 
                 self.spawn_client_task(connected_client, handler.clone(), global_tx.subscribe())
@@ -123,7 +129,7 @@ impl IpcServer {
         F: Fn(InboundMessage) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ()> + Send,
     {
-        info!("client connected");
+        info!("{}", loc::MSG_CLIENT_CONNECTED);
         tokio::spawn(async move {
             let (reader, mut writer) = tokio::io::split(stream);
             let mut buf_reader = tokio::io::BufReader::new(reader);
@@ -132,7 +138,6 @@ impl IpcServer {
                 let mut line = String::new();
                 loop {
                     line.clear();
-                    // Bound the maximum line length to 1MB to prevent memory exhaustion (OOM) or DoS from malicious inputs.
                     let mut handle = (&mut buf_reader).take(1024 * 1024);
                     match tokio::io::AsyncBufReadExt::read_line(&mut handle, &mut line).await {
                         Ok(0) => break,
@@ -141,11 +146,18 @@ impl IpcServer {
                             if trimmed.is_empty() {
                                 continue;
                             }
-                            if let Ok(msg) = serde_json::from_str::<InboundMessage>(trimmed) {
-                                handler(msg).await;
+                            info!("IPC raw line received: {}", trimmed);
+                            match serde_json::from_str::<InboundMessage>(trimmed) {
+                                Ok(msg) => handler(msg).await,
+                                Err(e) => {
+                                    warn!("{}: {} | raw: {}", loc::MSG_DESERIALIZATION_FAILED, e, trimmed);
+                                }
                             }
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            warn!("IPC read line error: {}", e);
+                            break;
+                        }
                     }
                 }
             };
@@ -162,7 +174,7 @@ impl IpcServer {
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("IPC write task lagged by {} messages", n);
+                            warn!("IPC write task lagged by {} messages", n);
                             continue;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
@@ -176,7 +188,7 @@ impl IpcServer {
                 _ = read_task => {},
                 _ = write_task => {},
             }
-            info!("client disconnected");
+            info!("{}", loc::MSG_CLIENT_DISCONNECTED);
         });
     }
 }
