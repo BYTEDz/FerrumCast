@@ -7,6 +7,7 @@ pub mod loc {
     pub const MSG_MOUSE_INPUT_FAILED: &str = "mouse_input_failed";
     pub const MSG_PORTAL_NOT_AVAILABLE: &str = "portal_remote_desktop_not_available";
     pub const MSG_NO_ACTIVE_PORTAL: &str = "no_active_linux_portal_instance";
+    pub const MSG_SEND_INPUT_FAILED: &str = "send_input_failed";
 }
 
 /// Represents mouse button types including primary, secondary, middle, side/thumb, and custom extra buttons.
@@ -90,7 +91,9 @@ fn add_and_extract(acc: &AtomicU64, delta: f64) -> i32 {
 #[cfg(target_os = "windows")]
 pub fn handle_mouse_windows(input: &MouseInput) {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
-    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SetCursorPos,
+    };
 
     unsafe {
         match input {
@@ -101,13 +104,24 @@ pub fn handle_mouse_windows(input: &MouseInput) {
 
                     let sw = GetSystemMetrics(SM_CXSCREEN).max(1) as f64;
                     let sh = GetSystemMetrics(SM_CYSCREEN).max(1) as f64;
-                    let abs_x = if *x <= 1.0 { *x } else { *x / sw };
-                    let abs_y = if *y <= 1.0 { *y } else { *y / sh };
 
-                    let dx = (abs_x.clamp(0.0, 1.0) * 65535.0) as i32;
-                    let dy = (abs_y.clamp(0.0, 1.0) * 65535.0) as i32;
+                    // Properly distinguish between normalized (0.0..1.0) and pixel coordinates
+                    let (abs_x, abs_y, px, py) = if *x <= 1.0 && *y <= 1.0 && *x >= 0.0 && *y >= 0.0 && (*x > 0.0 || *y > 0.0) {
+                        let norm_x = x.clamp(0.0, 1.0);
+                        let norm_y = y.clamp(0.0, 1.0);
+                        (norm_x, norm_y, (norm_x * (sw - 1.0)) as i32, (norm_y * (sh - 1.0)) as i32)
+                    } else {
+                        let norm_x = (x / sw).clamp(0.0, 1.0);
+                        let norm_y = (y / sh).clamp(0.0, 1.0);
+                        (norm_x, norm_y, x.clamp(0.0, sw - 1.0) as i32, y.clamp(0.0, sh - 1.0) as i32)
+                    };
 
-                    let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+                    let _ = SetCursorPos(px, py);
+
+                    let dx = (abs_x * 65535.0) as i32;
+                    let dy = (abs_y * 65535.0) as i32;
+
+                    let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
 
                     let input_evt = INPUT {
                         r#type: INPUT_MOUSE,
@@ -122,7 +136,9 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                             },
                         },
                     };
-                    SendInput(&[input_evt], std::mem::size_of::<INPUT>() as i32);
+                    if SendInput(&[input_evt], std::mem::size_of::<INPUT>() as i32) == 0 {
+                        tracing::warn!("{}", loc::MSG_SEND_INPUT_FAILED);
+                    }
                 } else {
                     let dx = add_and_extract(&ACC_X, *x);
                     let dy = add_and_extract(&ACC_Y, *y);
@@ -141,7 +157,9 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                                 },
                             },
                         };
-                        SendInput(&[input_evt], std::mem::size_of::<INPUT>() as i32);
+                        if SendInput(&[input_evt], std::mem::size_of::<INPUT>() as i32) == 0 {
+                            tracing::warn!("{}", loc::MSG_SEND_INPUT_FAILED);
+                        }
                     }
                 }
             }
@@ -168,7 +186,9 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                         },
                     },
                 };
-                SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+                if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) == 0 {
+                    tracing::warn!("{}", loc::MSG_SEND_INPUT_FAILED);
+                }
             }
             MouseInput::ButtonUp { button } => {
                 let (flags, mouse_data) = match button {
@@ -193,12 +213,15 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                         },
                     },
                 };
-                SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+                if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) == 0 {
+                    tracing::warn!("{}", loc::MSG_SEND_INPUT_FAILED);
+                }
             }
             MouseInput::Click { button } => {
                 handle_mouse_windows(&MouseInput::ButtonDown {
                     button: button.clone(),
                 });
+                std::thread::sleep(std::time::Duration::from_millis(10));
                 handle_mouse_windows(&MouseInput::ButtonUp {
                     button: button.clone(),
                 });
@@ -220,14 +243,16 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                             mi: MOUSEINPUT {
                                 dx: 0,
                                 dy: 0,
-                                mouseData: (*delta_y * 120.0) as u32,
+                                mouseData: ((*delta_y * 120.0) as i32) as u32,
                                 dwFlags: MOUSEEVENTF_WHEEL,
                                 time: 0,
                                 dwExtraInfo: 0,
                             },
                         },
                     };
-                    SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+                    if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) == 0 {
+                        tracing::warn!("{}", loc::MSG_SEND_INPUT_FAILED);
+                    }
                 }
                 if *delta_x != 0.0 {
                     let input = INPUT {
@@ -236,14 +261,16 @@ pub fn handle_mouse_windows(input: &MouseInput) {
                             mi: MOUSEINPUT {
                                 dx: 0,
                                 dy: 0,
-                                mouseData: (*delta_x * 120.0) as u32,
+                                mouseData: ((*delta_x * 120.0) as i32) as u32,
                                 dwFlags: MOUSEEVENTF_HWHEEL,
                                 time: 0,
                                 dwExtraInfo: 0,
                             },
                         },
                     };
-                    SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+                    if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) == 0 {
+                        tracing::warn!("{}", loc::MSG_SEND_INPUT_FAILED);
+                    }
                 }
             }
             MouseInput::Gesture(gesture) => match gesture {
