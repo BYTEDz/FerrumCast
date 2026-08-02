@@ -16,7 +16,15 @@ use tracing_subscriber::FmtSubscriber;
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
-const TOKEN_FILE: &str = "/tmp/ferrumcast.token";
+fn get_token_file_path() -> std::path::PathBuf {
+    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+        std::path::PathBuf::from(config_home).join("ferrumcast.token")
+    } else if let Ok(home) = std::env::var("HOME") {
+        std::path::PathBuf::from(home).join(".config").join("ferrumcast.token")
+    } else {
+        std::path::PathBuf::from("/tmp/ferrumcast.token")
+    }
+}
 
 const VERSION: &str = env!("FERRUMCAST_VERSION");
 
@@ -81,12 +89,15 @@ async fn main() -> Result<()> {
     let config_store = Arc::new(config::ConfigStore::new_from_args());
 
     #[cfg(target_os = "linux")]
+    let token_path = get_token_file_path();
+
+    #[cfg(target_os = "linux")]
     let initial_token = {
         let cfg = config_store.get();
         if cfg.token.is_some() {
             cfg.token
         } else {
-            std::fs::read_to_string(TOKEN_FILE).ok()
+            std::fs::read_to_string(&token_path).ok()
         }
     };
 
@@ -106,8 +117,11 @@ async fn main() -> Result<()> {
         match portal::request_screencast(initial_token, Some(outbound_tx.clone())).await {
             Ok(c) => {
                 if let Some(ref t) = c.restore_token {
-                    info!("persisting portal token to {}", TOKEN_FILE);
-                    let _ = std::fs::write(TOKEN_FILE, t);
+                    info!("persisting portal token to {:?}", token_path);
+                    if let Some(parent) = token_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&token_path, t);
                 }
                 Some(c)
             }
@@ -225,15 +239,7 @@ async fn main() -> Result<()> {
                                 #[cfg(target_os = "windows")]
                                 input::handle_mouse_windows(input);
                                 #[cfg(target_os = "linux")]
-                                if let Some(ref portal) = platform_ctx.portal_capture {
-                                    let portal = portal.clone();
-                                    let input = input.clone();
-                                    tokio::spawn(async move {
-                                        portal.handle_mouse_input(&input).await;
-                                    });
-                                } else {
-                                    tracing::warn!("{}", input::loc::MSG_NO_ACTIVE_PORTAL);
-                                }
+                                tracing::debug!("Linux mouse input routed through PCLink Core /dev/uinput: {:?}", input);
                             }
                         }
                     }

@@ -48,6 +48,7 @@ pub enum MouseInput {
 }
 
 /// Maps high-level MouseButton enum variants to standard Linux event codes (`linux/input-event-codes.h`).
+#[allow(dead_code)]
 pub fn mouse_button_to_linux_code(button: &MouseButton) -> i32 {
     match button {
         MouseButton::Left => 0x110,    // BTN_LEFT

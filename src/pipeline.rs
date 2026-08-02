@@ -8,6 +8,7 @@ pub struct PlatformContext {
     #[cfg(target_os = "linux")]
     pub portal_info: Option<(u32, i32)>,
     #[cfg(target_os = "linux")]
+    #[allow(dead_code)]
     pub portal_capture: Option<std::sync::Arc<crate::portal::PortalCapture>>,
 }
 
