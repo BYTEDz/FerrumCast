@@ -226,6 +226,39 @@ async fn main() -> Result<()> {
                                     active_encoder: stream.active_encoder(),
                                 });
                             }
+                            ipc::InboundMessage::Control(ipc::ControlMessage::SwitchDisplay { direction }) => {
+                                let mut cfg = config.get();
+                                let prev_index = cfg.monitor_index;
+
+                                if direction == "next" {
+                                    cfg.monitor_index = cfg.monitor_index.saturating_add(1);
+                                } else if direction == "prev" {
+                                    cfg.monitor_index = cfg.monitor_index.saturating_sub(1);
+                                }
+
+                                if cfg.monitor_index != prev_index {
+                                    info!("Switching monitor from {} to {}", prev_index, cfg.monitor_index);
+                                    config.set(cfg.clone());
+
+                                    let enc = pipeline::encoders::resolve_encoder(&cfg.encoder, &caps);
+                                    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
+                                        &cfg,
+                                        enc.as_ref(),
+                                        &platform_ctx,
+                                    );
+
+                                    info!("restarting pipeline for monitor switch: {}", pipeline_str);
+                                    if let Err(e) = stream.restart_pipeline(&pipeline_str) {
+                                        error!("monitor switch restart failed: {}. Falling back to monitor 0.", e);
+                                        if cfg.monitor_index != 0 {
+                                            cfg.monitor_index = 0;
+                                            config.set(cfg.clone());
+                                            let fallback_pipe = pipeline::PipelineBuilder::build_pipeline(&cfg, enc.as_ref(), &platform_ctx);
+                                            let _ = stream.restart_pipeline(&fallback_pipe);
+                                        }
+                                    }
+                                }
+                            }
                             ipc::InboundMessage::Control(ipc::ControlMessage::GetCapabilities) => {
                                 let _ = tx.send(ipc::OutboundMessage::CapabilitiesResponse(
                                     (*caps).clone(),
@@ -235,7 +268,6 @@ async fn main() -> Result<()> {
                                 let _ = stream.force_keyframe();
                             }
                             ipc::InboundMessage::MouseInput(ref input) => {
-                                info!("IPC received MouseInput: {:?}", input);
                                 #[cfg(target_os = "windows")]
                                 input::handle_mouse_windows(input);
                                 #[cfg(target_os = "linux")]

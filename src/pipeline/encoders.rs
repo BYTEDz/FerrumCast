@@ -1,23 +1,14 @@
 use crate::config::{Capabilities, EncoderChoice, StreamConfig};
 
 pub trait VideoEncoder: Send + Sync {
-    /// Returns the name of the GStreamer element (e.g., "qsvh264enc").
     fn gst_element(&self) -> &'static str;
-
-    /// Generates custom rate control and tuning properties for the encoder.
     fn encode_params(&self, cfg: &StreamConfig) -> String;
-
-    /// Returns the target pixel format for input caps (e.g., NV12, I420).
     fn pre_caps(&self) -> Option<&'static str> {
         Some("NV12")
     }
-
-    /// True if this is a hardware-accelerated encoder.
     fn is_hardware(&self) -> bool {
         true
     }
-
-    /// True if this is a dedicated, high-performance GPU hardware ASIC block (QSV, NVENC, AMF).
     fn is_gpu_asic(&self) -> bool {
         false
     }
@@ -32,33 +23,30 @@ impl VideoEncoder for X264Encoder {
     fn encode_params(&self, cfg: &StreamConfig) -> String {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
-        let bframes = cfg.bframes;
         let is_cqp = cfg.rc_mode == "cqp";
 
         if is_cqp {
             format!(
                 "quantizer={cqp} tune={tune} speed-preset={preset} \
-                rc-lookahead=0 sync-lookahead=0 key-int-max={key_int} bframes={bframes} \
+                rc-lookahead=0 sync-lookahead=0 key-int-max={key_int} bframes=0 \
                 threads=0 sliced-threads=true b-adapt=false \
                 option-string=repeat-headers=1",
                 cqp = cfg.cqp_value,
                 tune = cfg.tune,
                 preset = cfg.speed_preset,
                 key_int = key_int,
-                bframes = bframes,
             )
         } else {
             let vbv = ((bitrate as f32 * 0.05) as u32).max(100);
             format!(
                 "bitrate={bitrate} tune={tune} speed-preset={preset} \
-                rc-lookahead=0 sync-lookahead=0 key-int-max={key_int} bframes={bframes} \
+                rc-lookahead=0 sync-lookahead=0 key-int-max={key_int} bframes=0 \
                 threads=0 sliced-threads=true b-adapt=false \
                 option-string=nal-hrd=cbr:repeat-headers=1:vbv-maxrate={bitrate}:vbv-bufsize={vbv}",
                 bitrate = bitrate,
                 tune = cfg.tune,
                 preset = cfg.speed_preset,
                 key_int = key_int,
-                bframes = bframes,
                 vbv = vbv,
             )
         }
@@ -82,30 +70,24 @@ impl VideoEncoder for VaH264Encoder {
     fn encode_params(&self, cfg: &StreamConfig) -> String {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
-        let bframes = cfg.bframes;
-        let ref_frames = cfg.ref_frames;
         let is_cqp = cfg.rc_mode == "cqp";
 
         if is_cqp {
             format!(
                 "rate-control=cqp qp-i={cqp} key-int-max={key_int} \
-                target-usage={tu} ref-frames={ref_frames} b-frames={bframes} num-slices=4",
+                target-usage={tu} ref-frames=1 b-frames=0 num-slices=4",
                 cqp = cfg.cqp_value,
                 key_int = key_int,
                 tu = cfg.vaapi_target_usage,
-                ref_frames = ref_frames,
-                bframes = bframes,
             )
         } else {
             format!(
                 "bitrate={bitrate} rate-control={rc} key-int-max={key_int} \
-                target-usage={tu} ref-frames={ref_frames} b-frames={bframes} num-slices=4",
+                target-usage={tu} ref-frames=1 b-frames=0 num-slices=4",
                 bitrate = bitrate,
                 rc = cfg.rc_mode,
                 key_int = key_int,
                 tu = cfg.vaapi_target_usage,
-                ref_frames = ref_frames,
-                bframes = bframes,
             )
         }
     }
@@ -124,8 +106,6 @@ impl VideoEncoder for NvencEncoder {
     fn encode_params(&self, cfg: &StreamConfig) -> String {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
-        let bframes = cfg.bframes;
-        let ref_frames = cfg.ref_frames;
         let is_cqp = cfg.rc_mode == "cqp";
 
         let rc = if is_cqp {
@@ -136,29 +116,26 @@ impl VideoEncoder for NvencEncoder {
             "cbr-ld-hq"
         };
 
+        // B-frames disabled and lookahead disabled for ultra-low latency predictive tracking.
         if is_cqp {
             format!(
-                "qp-const-i={cqp} zerolatency=true preset={preset} tune={tune} \
-                rc={rc} key-int-max={key_int} b-frames={bframes} ref={ref_frames}",
+                "qp-const-i={cqp} zerolatency=true rc-lookahead=0 spatial-aq=false temporal-aq=false \
+                preset={preset} tune={tune} rc={rc} key-int-max={key_int} b-frames=0 ref=1",
                 cqp = cfg.cqp_value,
                 preset = cfg.nvenc_preset,
                 tune = cfg.nvenc_tune,
                 rc = rc,
                 key_int = key_int,
-                bframes = bframes,
-                ref_frames = ref_frames,
             )
         } else {
             format!(
-                "bitrate={bitrate} zerolatency=true preset={preset} tune={tune} \
-                rc={rc} key-int-max={key_int} b-frames={bframes} ref={ref_frames}",
+                "bitrate={bitrate} zerolatency=true rc-lookahead=0 spatial-aq=false temporal-aq=false \
+                preset={preset} tune={tune} rc={rc} key-int-max={key_int} b-frames=0 ref=1",
                 bitrate = bitrate,
                 preset = cfg.nvenc_preset,
                 tune = cfg.nvenc_tune,
                 rc = rc,
                 key_int = key_int,
-                bframes = bframes,
-                ref_frames = ref_frames,
             )
         }
     }
@@ -177,32 +154,26 @@ impl VideoEncoder for QsvEncoder {
     fn encode_params(&self, cfg: &StreamConfig) -> String {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
-        let bframes = cfg.bframes;
-        let ref_frames = cfg.ref_frames;
         let is_cqp = cfg.rc_mode == "cqp";
         let rc = if is_cqp { "cqp" } else { cfg.rc_mode.as_str() };
 
         if is_cqp {
             format!(
                 "qpi={cqp} qpp={cqp} qpb={cqp} target-usage={tu} rate-control={rc} gop-size={key_int} \
-                b-frames={bframes} ref-frames={ref_frames} low-latency=true",
+                b-frames=0 ref-frames=1 low-latency=true async-depth=1",
                 cqp = cfg.cqp_value,
                 tu = cfg.qsv_target_usage,
                 rc = rc,
                 key_int = key_int,
-                bframes = bframes,
-                ref_frames = ref_frames,
             )
         } else {
             format!(
                 "bitrate={bitrate} target-usage={tu} rate-control={rc} gop-size={key_int} \
-                b-frames={bframes} ref-frames={ref_frames} low-latency=true",
+                b-frames=0 ref-frames=1 low-latency=true async-depth=1",
                 bitrate = bitrate,
                 tu = cfg.qsv_target_usage,
                 rc = rc,
                 key_int = key_int,
-                bframes = bframes,
-                ref_frames = ref_frames,
             )
         }
     }
@@ -225,7 +196,7 @@ impl VideoEncoder for AmfEncoder {
         let rc = if is_cqp { "cqp" } else { cfg.rc_mode.as_str() };
 
         format!(
-            "bitrate={bitrate} usage=ultralowlatency rc={rc} key-int-max={key_int}",
+            "bitrate={bitrate} usage=ultralowlatency rc={rc} key-int-max={key_int} b-frames=0",
             bitrate = bitrate,
             rc = rc,
             key_int = key_int,
@@ -252,7 +223,6 @@ impl VideoEncoder for MfEncoder {
     }
 }
 
-/// Dynamic factory resolving standard system cap mappings to their concrete struct representations.
 pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn VideoEncoder> {
     let has = |label: &str| caps.encoders.iter().any(|e| e == label);
 

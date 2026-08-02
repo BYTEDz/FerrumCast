@@ -23,6 +23,7 @@ pub enum ControlMessage {
     GetCapabilities,
     RestartPipeline(StreamConfig),
     ForceKeyframe,
+    SwitchDisplay { direction: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,9 +49,7 @@ pub struct IpcServer {
 
 impl IpcServer {
     pub fn new(path: &str) -> Self {
-        Self {
-            path: path.to_string(),
-        }
+        Self { path: path.to_string() }
     }
 
     pub async fn run<F, Fut>(
@@ -69,28 +68,19 @@ impl IpcServer {
             if Path::new(&self.path).exists() {
                 let _ = std::fs::remove_file(&self.path);
             }
-
             let listener = UnixListener::bind(&self.path)?;
-
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ =
-                    std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+                let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
             }
-
             info!("IPC listening on {}", self.path);
-
             loop {
                 let (socket, _) = match listener.accept().await {
                     Ok(s) => s,
-                    Err(e) => {
-                        error!("accept error: {}", e);
-                        continue;
-                    }
+                    Err(e) => { error!("accept error: {}", e); continue; }
                 };
-                self.spawn_client_task(socket, handler.clone(), global_tx.subscribe())
-                    .await;
+                self.spawn_client_task(socket, handler.clone(), global_tx.subscribe()).await;
             }
         }
 
@@ -98,23 +88,16 @@ impl IpcServer {
         {
             use tokio::net::windows::named_pipe::ServerOptions;
             info!("IPC listening on named pipe: {}", self.path);
-
-            let mut server = ServerOptions::new()
-                .first_pipe_instance(true)
-                .create(&self.path)?;
-
+            let mut server = ServerOptions::new().first_pipe_instance(true).create(&self.path)?;
             loop {
                 if let Err(e) = server.connect().await {
                     error!("pipe connect error: {}", e);
                     server = ServerOptions::new().create(&self.path)?;
                     continue;
                 }
-
                 let connected_client = server;
                 server = ServerOptions::new().create(&self.path)?;
-
-                self.spawn_client_task(connected_client, handler.clone(), global_tx.subscribe())
-                    .await;
+                self.spawn_client_task(connected_client, handler.clone(), global_tx.subscribe()).await;
             }
         }
     }
@@ -143,21 +126,14 @@ impl IpcServer {
                         Ok(0) => break,
                         Ok(_) => {
                             let trimmed = line.trim();
-                            if trimmed.is_empty() {
-                                continue;
-                            }
+                            if trimmed.is_empty() { continue; }
                             info!("IPC raw line received: {}", trimmed);
                             match serde_json::from_str::<InboundMessage>(trimmed) {
                                 Ok(msg) => handler(msg).await,
-                                Err(e) => {
-                                    warn!("{}: {} | raw: {}", loc::MSG_DESERIALIZATION_FAILED, e, trimmed);
-                                }
+                                Err(e) => warn!("{}: {} | raw: {}", loc::MSG_DESERIALIZATION_FAILED, e, trimmed)
                             }
                         }
-                        Err(e) => {
-                            warn!("IPC read line error: {}", e);
-                            break;
-                        }
+                        Err(e) => { warn!("IPC read line error: {}", e); break; }
                     }
                 }
             };
@@ -168,26 +144,19 @@ impl IpcServer {
                         Ok(msg) => {
                             if let Ok(mut data) = serde_json::to_vec(&msg) {
                                 data.push(b'\n');
-                                if writer.write_all(&data).await.is_err() {
-                                    break;
-                                }
+                                if writer.write_all(&data).await.is_err() { break; }
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             warn!("IPC write task lagged by {} messages", n);
                             continue;
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            break;
-                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => { break; }
                     }
                 }
             };
 
-            tokio::select! {
-                _ = read_task => {},
-                _ = write_task => {},
-            }
+            tokio::select! { _ = read_task => {}, _ = write_task => {}, }
             info!("{}", loc::MSG_CLIENT_DISCONNECTED);
         });
     }

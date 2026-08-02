@@ -37,21 +37,20 @@ impl PipelineBuilder {
         }
 
         #[cfg(target_os = "windows")]
-        let video_src = self::sys::video_source(ctx, use_gdi, cfg.show_cursor);
+        let video_src = self::sys::video_source(ctx, use_gdi, cfg.show_cursor, cfg.monitor_index);
         #[cfg(not(target_os = "windows"))]
-        let video_src = self::sys::video_source(ctx, cfg.show_cursor);
+        let video_src = self::sys::video_source(ctx, cfg.show_cursor, cfg.monitor_index);
 
         let (converter, caps) = if cfg!(target_os = "windows") {
             if use_gdi {
                 let conv = "videoconvert n-threads=0".to_string();
-                let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, None, false);
+                let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, None);
                 (conv, c)
             } else {
                 if enc.is_gpu_asic() {
                     let conv = "d3d11convert".to_string();
                     let mem_feature = Some("video/x-raw(memory:D3D11Memory)");
-                    let c =
-                        self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature, true);
+                    let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature);
                     (conv, c)
                 } else {
                     let target_format = enc.pre_caps().unwrap_or("NV12");
@@ -61,7 +60,6 @@ impl PipelineBuilder {
                         Some(target_format),
                         true,
                         gpu_mem_feature,
-                        true,
                     );
 
                     let conv = format!(
@@ -89,7 +87,7 @@ impl PipelineBuilder {
                 "videoconvert n-threads=0".to_string()
             };
 
-            let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature, false);
+            let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature);
             (conv, c)
         };
 
@@ -98,9 +96,9 @@ impl PipelineBuilder {
 
         let mut video = format!(
             "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
-            video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 ! \
+            video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 disable-passthrough=true ! \
             video/x-h264,stream-format=byte-stream,alignment=au ! \
-            queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} leaky=downstream ! \
+            queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
             rtph264pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
             video_src = video_src,
             converter = converter,
@@ -114,8 +112,8 @@ impl PipelineBuilder {
         let mut audio = if cfg.audio {
             let src = self::sys::audio_source();
             format!(
-                "{} ! queue max-size-buffers=100 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
-                audioconvert ! audioresample ! opusenc ! rtpopuspay",
+                "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+                audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 ! rtpopuspay",
                 src
             )
         } else {
