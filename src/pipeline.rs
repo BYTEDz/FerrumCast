@@ -26,6 +26,29 @@ impl PipelineBuilder {
         enc: &dyn encoders::VideoEncoder,
         ctx: &PlatformContext,
     ) -> String {
+        if cfg.audio_only {
+            info!("Building Audio-Only streaming pipeline (bypassing video capture and encoding)");
+            let src = self::sys::audio_source();
+            let mut audio = format!(
+                "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+                audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 ! rtpopuspay",
+                src
+            );
+
+            if let Some(ref srtp_key) = cfg.srtp_key {
+                audio = format!(
+                    "{} ! srtpenc key=\"{}\" rtp-cipher=aes-128-icm rtp-auth=hmac-sha1-80 rtcp-cipher=aes-128-icm rtcp-auth=hmac-sha1-80",
+                    audio, srtp_key
+                );
+            }
+
+            let udp_buf = cfg.udp_buffer_size;
+            return format!(
+                "{} ! udpsink host={} port=5006 sync=false async=false buffer-size={}",
+                audio, cfg.client_host, udp_buf
+            );
+        }
+
         let is_hw = enc.is_hardware();
         let is_vm = detect_hypervisor();
 
@@ -55,12 +78,8 @@ impl PipelineBuilder {
                 } else {
                     let target_format = enc.pre_caps().unwrap_or("NV12");
                     let gpu_mem_feature = Some("video/x-raw(memory:D3D11Memory)");
-                    let gpu_caps = self::generic::scale_caps(
-                        cfg,
-                        Some(target_format),
-                        true,
-                        gpu_mem_feature,
-                    );
+                    let gpu_caps =
+                        self::generic::scale_caps(cfg, Some(target_format), true, gpu_mem_feature);
 
                     let conv = format!(
                         "d3d11convert ! {}d3d11download ! videoconvert n-threads=0",
