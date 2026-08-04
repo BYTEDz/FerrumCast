@@ -57,7 +57,20 @@ async fn main() -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(exe_path) = std::env::current_exe() {
+        if let Ok(raw_exe_path) = std::env::current_exe() {
+            // Resolve canonical physical path to bypass Windows Junction / Untrusted Mount Point security policy
+            let exe_path = raw_exe_path
+                .canonicalize()
+                .map(|p| {
+                    let s = p.to_string_lossy();
+                    if s.starts_with(r"\\?\") {
+                        std::path::PathBuf::from(&s[4..])
+                    } else {
+                        p
+                    }
+                })
+                .unwrap_or(raw_exe_path);
+
             if let Some(exe_dir) = exe_path.parent() {
                 let parent_dir = exe_dir.parent();
 
