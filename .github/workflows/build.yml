@@ -133,31 +133,73 @@ jobs:
           $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v0.1.0" }
           $zipName = "ferrumcast-$ver-${{ matrix.target }}.zip"
           $dist = Join-Path $PWD dist
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-
-          # Copy main executable
-          Copy-Item -Path (Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe") -Destination (Join-Path $dist "ferrumcast.exe") -Force
-
-          # Copy GStreamer runtime shared libraries (*.dll from bin)
-          $gstBin = Join-Path $env:GSTREAMER_ROOT 'bin'
-          Copy-Item -Path (Join-Path $gstBin '*.dll') -Destination $dist -Force
-
-          # Copy GStreamer plugin modules (*.dll from lib/gstreamer-1.0) into dist/gstreamer-1.0
-          $gstPlugins = Join-Path $env:GSTREAMER_ROOT 'lib\gstreamer-1.0'
           $distPlugins = Join-Path $dist 'gstreamer-1.0'
+          $distScannerDir = Join-Path $dist 'libexec\gstreamer-1.0'
+
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
           New-Item -ItemType Directory -Force -Path $distPlugins | Out-Null
-          if (Test-Path $gstPlugins) {
-              Copy-Item -Path (Join-Path $gstPlugins '*.dll') -Destination $distPlugins -Force
+
+          $gstBin = Join-Path $env:GSTREAMER_ROOT 'bin'
+          $gstPlugins = Join-Path $env:GSTREAMER_ROOT 'lib\gstreamer-1.0'
+
+          # 1. Copy main binary
+          $exePath = Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe"
+          Copy-Item -Path $exePath -Destination $dist -Force
+
+          # 2. Select required GStreamer streaming plugins
+          $essentialPlugins = @(
+              'gstapp.dll', 'gstaudioconvert.dll', 'gstaudioresample.dll', 'gstautodetect.dll',
+              'gstcoreelements.dll', 'gstd3d11.dll', 'gstmediafoundation.dll', 'gstnvcodec.dll',
+              'gstopus.dll', 'gstqsv.dll', 'gstrtp.dll', 'gstsrtp.dll', 'gstudp.dll',
+              'gstvideoconvertscale.dll', 'gstvideoconvert.dll', 'gstvideorate.dll',
+              'gstvideoscale.dll', 'gstvideoparsersbad.dll', 'gstwasapi.dll', 'gstx264.dll'
+          )
+
+          foreach ($plugin in $essentialPlugins) {
+              $pSrc = Join-Path $gstPlugins $plugin
+              if (Test-Path $pSrc) {
+                  Copy-Item -Path $pSrc -Destination $distPlugins -Force
+              }
           }
 
-          # Copy gst-plugin-scanner.exe helper
+          # 3. Smart Recursive Dependency Finder for runtime DLLs
+          function Get-DllDependencies($filePath) {
+              $bytes = [System.IO.File]::ReadAllBytes($filePath)
+              $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+              $matches = [regex]::Matches($text, '(?i)[a-z0-9_\-]+\.dll')
+              return $matches.Value | Select-Object -Unique
+          }
+
+          $processed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          $queue = [System.Collections.Generic.Queue[string]]::new()
+
+          # Enqueue ferrumcast.exe and all copied plugin DLLs as dependency analysis targets
+          Get-ChildItem -Path $dist -Recurse -Filter "*.exe" | ForEach-Object { $queue.Enqueue($_.FullName) }
+          Get-ChildItem -Path $distPlugins -Filter "*.dll" | ForEach-Object { $queue.Enqueue($_.FullName) }
+
+          while ($queue.Count -gt 0) {
+              $targetPath = $queue.Dequeue()
+              if ($processed.Contains($targetPath)) { continue }
+              $processed.Add($targetPath) | Out-Null
+
+              $deps = Get-DllDependencies -filePath $targetPath
+              foreach ($dep in $deps) {
+                  $candidateGstDll = Join-Path $gstBin $dep
+                  $distDestination = Join-Path $dist $dep
+
+                  if ((Test-Path $candidateGstDll) -and -not (Test-Path $distDestination)) {
+                      Write-Host "Smart Finder: Including required dependency $dep (for $(Split-Path $targetPath -Leaf))"
+                      Copy-Item -Path $candidateGstDll -Destination $distDestination -Force
+                      $queue.Enqueue($distDestination)
+                  }
+              }
+          }
+
+          # 4. Copy gst-plugin-scanner.exe helper
           $scanner = Join-Path $env:GSTREAMER_ROOT 'libexec\gstreamer-1.0\gst-plugin-scanner.exe'
-          $distScannerDir = Join-Path $dist 'libexec\gstreamer-1.0'
           if (Test-Path $scanner) {
               New-Item -ItemType Directory -Force -Path $distScannerDir | Out-Null
               Copy-Item -Path $scanner -Destination $distScannerDir -Force
-          } elseif (Test-Path (Join-Path $gstBin 'gst-plugin-scanner.exe')) {
-              Copy-Item -Path (Join-Path $gstBin 'gst-plugin-scanner.exe') -Destination $dist -Force
           }
 
           Compress-Archive -Path (Join-Path $dist '*') -DestinationPath (Join-Path $PWD $zipName) -Force
