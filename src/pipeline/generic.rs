@@ -15,9 +15,9 @@ pub fn scale_caps(
         pre_elements.push_str("videoscale ! ");
     }
 
-    // drop-only=true prevents videorate from duplicating frames and buffering, drastically reducing latency.
+    // drop-only=true max-rate=0 prevents videorate from duplicating frames and buffering, drastically reducing latency.
     if cfg.framerate.is_some() {
-        pre_elements.push_str("videorate drop-only=true ! ");
+        pre_elements.push_str("videorate drop-only=true max-rate=0 ! ");
     }
 
     if let Some(fps) = cfg.framerate {

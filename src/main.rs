@@ -57,94 +57,20 @@ async fn main() -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(raw_exe_path) = std::env::current_exe() {
-            // Resolve canonical physical path to bypass Windows Junction / Untrusted Mount Point security policy
-            let exe_path = raw_exe_path
-                .canonicalize()
-                .map(|p| {
-                    let s = p.to_string_lossy();
-                    if s.starts_with(r"\\?\") {
-                        std::path::PathBuf::from(&s[4..])
-                    } else {
-                        p
-                    }
-                })
-                .unwrap_or(raw_exe_path);
-
+        if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                let parent_dir = exe_dir.parent();
-
-                let mut candidate_dirs = vec![
-                    exe_dir.join("gstreamer-1.0"),
-                    exe_dir.join("lib").join("gstreamer-1.0"),
-                    exe_dir.join("plugins"),
-                ];
-
-                if let Some(parent) = parent_dir {
-                    candidate_dirs.push(parent.join("gstreamer-1.0"));
-                    candidate_dirs.push(parent.join("lib").join("gstreamer-1.0"));
-                    candidate_dirs.push(parent.join("plugins"));
-                }
-
-                candidate_dirs.push(exe_dir.to_path_buf());
-
-                let mut chosen_plugin_dir = None;
-
-                for candidate in &candidate_dirs {
-                    if candidate.exists() {
-                        if let Ok(entries) = std::fs::read_dir(candidate) {
-                            let contains_plugin_dll = entries.filter_map(|e| e.ok()).any(|e| {
-                                let path = e.path();
-                                let is_dll = path
-                                    .extension()
-                                    .and_then(|ext| ext.to_str())
-                                    .map_or(false, |ext| ext.eq_ignore_ascii_case("dll"));
-                                let file_name = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("")
-                                    .to_lowercase();
-
-                                is_dll
-                                    && file_name.starts_with("gst")
-                                    && !file_name.contains("-1.0")
-                            });
-                            if contains_plugin_dll {
-                                chosen_plugin_dir = Some(candidate.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let plugin_dir = chosen_plugin_dir.unwrap_or_else(|| exe_dir.to_path_buf());
-                let temp_registry = std::env::temp_dir().join("ferrumcast_gst_registry.bin");
-
-                unsafe {
-                    std::env::set_var("GST_PLUGIN_PATH_1_0", &plugin_dir);
-                    std::env::set_var("GST_PLUGIN_PATH", &plugin_dir);
-                    std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &plugin_dir);
-                    std::env::set_var("GST_PLUGIN_SYSTEM_PATH", &plugin_dir);
-                    std::env::set_var("GST_REGISTRY", &temp_registry);
-
-                    let scanner_candidates = [
-                        exe_dir.join("libexec").join("gstreamer-1.0").join("gst-plugin-scanner.exe"),
-                        exe_dir.join("gst-plugin-scanner.exe"),
-                    ];
-                    for scanner in &scanner_candidates {
-                        if scanner.exists() {
-                            std::env::set_var("GST_PLUGIN_SCANNER", scanner);
-                            break;
-                        }
+                let local_plugins = exe_dir.join("lib/gstreamer-1.0");
+                let local_scanner = exe_dir.join("libexec/gstreamer-1.0/gst-plugin-scanner.exe");
+                if local_plugins.exists() {
+                    unsafe {
+                        std::env::set_var("GST_PLUGIN_PATH", &local_plugins);
+                        std::env::set_var("GST_PLUGIN_SCANNER", &local_scanner);
                     }
                 }
 
                 if let Some(path) = std::env::var_os("PATH") {
                     let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
                     paths.insert(0, exe_dir.to_path_buf());
-                    if let Some(parent) = parent_dir {
-                        paths.insert(1, parent.to_path_buf());
-                    }
                     if let Ok(new_path) = std::env::join_paths(paths) {
                         unsafe {
                             std::env::set_var("PATH", new_path);
