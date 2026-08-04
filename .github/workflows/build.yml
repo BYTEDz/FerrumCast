@@ -134,12 +134,32 @@ jobs:
           $zipName = "ferrumcast-$ver-${{ matrix.target }}.zip"
           $dist = Join-Path $PWD dist
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          # Copy main executable
           Copy-Item -Path (Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe") -Destination (Join-Path $dist "ferrumcast.exe") -Force
+
+          # Copy GStreamer runtime shared libraries (*.dll from bin)
           $gstBin = Join-Path $env:GSTREAMER_ROOT 'bin'
-          $dlls = @('ffi-7.dll', 'gio-2.0-0.dll', 'glib-2.0-0.dll', 'gmodule-2.0-0.dll', 'gobject-2.0-0.dll', 'gstallocators-1.0-0.dll', 'gstapp-1.0-0.dll', 'gstaudio-1.0-0.dll', 'gstbase-1.0-0.dll', 'gstcontroller-1.0-0.dll', 'gstnet-1.0-0.dll', 'gstpbutils-1.0-0.dll', 'gstreamer-1.0-0.dll', 'gstrtp-1.0-0.dll', 'gstsctp-1.0-0.dll', 'gstsdp-1.0-0.dll', 'gstvideo-1.0-0.dll', 'gstwebrtc-1.0-0.dll', 'gstwebrtcnice-1.0-0.dll', 'gthread-2.0-0.dll', 'iconv-2.dll', 'intl-8.dll', 'json-glib-1.0-0.dll', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll', 'libwinpthread-1.dll', 'nice-10.dll', 'opus-0.dll', 'orc-0.4-0.dll', 'pcre2-8-0.dll', 'proxy-1.dll', 'srtp2-1.dll', 'x264-164.dll', 'z-1.dll')
-          foreach ($dll in $dlls) { Copy-Item -Path (Join-Path $gstBin $dll) -Destination $dist -Force }
-          $scanner = Join-Path $gstBin 'gst-plugin-scanner.exe'
-          if (Test-Path $scanner) { Copy-Item -Path $scanner -Destination $dist -Force }
+          Copy-Item -Path (Join-Path $gstBin '*.dll') -Destination $dist -Force
+
+          # Copy GStreamer plugin modules (*.dll from lib/gstreamer-1.0) into dist/gstreamer-1.0
+          $gstPlugins = Join-Path $env:GSTREAMER_ROOT 'lib\gstreamer-1.0'
+          $distPlugins = Join-Path $dist 'gstreamer-1.0'
+          New-Item -ItemType Directory -Force -Path $distPlugins | Out-Null
+          if (Test-Path $gstPlugins) {
+              Copy-Item -Path (Join-Path $gstPlugins '*.dll') -Destination $distPlugins -Force
+          }
+
+          # Copy gst-plugin-scanner.exe helper
+          $scanner = Join-Path $env:GSTREAMER_ROOT 'libexec\gstreamer-1.0\gst-plugin-scanner.exe'
+          $distScannerDir = Join-Path $dist 'libexec\gstreamer-1.0'
+          if (Test-Path $scanner) {
+              New-Item -ItemType Directory -Force -Path $distScannerDir | Out-Null
+              Copy-Item -Path $scanner -Destination $distScannerDir -Force
+          } elseif (Test-Path (Join-Path $gstBin 'gst-plugin-scanner.exe')) {
+              Copy-Item -Path (Join-Path $gstBin 'gst-plugin-scanner.exe') -Destination $dist -Force
+          }
+
           Compress-Archive -Path (Join-Path $dist '*') -DestinationPath (Join-Path $PWD $zipName) -Force
           echo "UPLOAD_TARGET=$zipName" >> $env:GITHUB_ENV
 
