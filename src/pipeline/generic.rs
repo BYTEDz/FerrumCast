@@ -9,25 +9,34 @@ pub fn scale_caps(
     let mut pre_elements = String::new();
     let mut parts = Vec::new();
 
-    // Hardware converters (d3d11convert, vapostproc) scale automatically on the GPU.
-    // Inserting 'videoscale' breaks zero-copy by forcing a massive CPU memory transfer!
-    if (cfg.width.is_some() || cfg.height.is_some()) && !is_hw {
+    let has_target_res = cfg.width.map_or(false, |w| w > 0) || cfg.height.map_or(false, |h| h > 0);
+
+    // Insert videoscale element whenever a target resolution is set (both HW and SW pipelines)
+    if has_target_res {
         pre_elements.push_str("videoscale ! ");
     }
 
-    // drop-only=true max-rate=0 prevents videorate from duplicating frames and buffering, drastically reducing latency.
-    if cfg.framerate.is_some() {
-        pre_elements.push_str("videorate drop-only=true max-rate=0 ! ");
+    // Fixed: Removed invalid max-rate=0 property from videorate
+    if cfg.framerate.map_or(false, |f| f > 0) {
+        pre_elements.push_str("videorate drop-only=true ! ");
     }
 
     if let Some(fps) = cfg.framerate {
-        parts.push(format!("framerate={}/1", fps));
+        if fps > 0 {
+            parts.push(format!("framerate={}/1", fps));
+        }
     }
+
     if let Some(w) = cfg.width {
-        parts.push(format!("width={}", w));
+        if w > 0 {
+            parts.push(format!("width={}", w));
+        }
     }
+
     if let Some(h) = cfg.height {
-        parts.push(format!("height={}", h));
+        if h > 0 {
+            parts.push(format!("height={}", h));
+        }
     }
 
     let format_str = if is_hw {

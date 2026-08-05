@@ -30,7 +30,7 @@ impl PipelineBuilder {
 
         if cfg.audio_only {
             info!(
-                "Building Audio-Only streaming pipeline (audio_bitrate={}bps)",
+                "Building Audio-Only multi-client broadcast pipeline (audio_bitrate={}bps)",
                 audio_bitrate
             );
             let src = self::sys::audio_source();
@@ -49,8 +49,8 @@ impl PipelineBuilder {
 
             let udp_buf = cfg.udp_buffer_size;
             return format!(
-                "{} ! udpsink host={} port=5006 sync=false async=false buffer-size={}",
-                audio, cfg.client_host, udp_buf
+                "{} ! udpsink host=255.255.255.255 port=5006 auto-multicast=true sync=false async=false buffer-size={}",
+                audio, udp_buf
             );
         }
 
@@ -161,8 +161,8 @@ impl PipelineBuilder {
 
         let audio_branch = if cfg.audio {
             format!(
-                " {} ! udpsink host={} port=5006 sync=false async=false buffer-size=1048576",
-                audio, cfg.client_host
+                " {} ! udpsink host=255.255.255.255 port=5006 auto-multicast=true sync=false async=false buffer-size=1048576",
+                audio
             )
         } else {
             String::new()
