@@ -73,6 +73,9 @@ fn default_colorimetry() -> String {
 fn default_bitrate() -> u32 {
     6000
 }
+fn default_audio_bitrate() -> u32 {
+    128
+}
 fn default_client_host() -> String {
     "127.0.0.1".to_string()
 }
@@ -93,6 +96,12 @@ pub struct StreamConfig {
     pub framerate: Option<u32>,
     #[serde(default = "default_bitrate")]
     pub bitrate: u32,
+    #[serde(
+        default = "default_audio_bitrate",
+        rename = "audioBitrate",
+        alias = "audio_bitrate"
+    )]
+    pub audio_bitrate: u32,
     #[serde(default)]
     pub encoder: EncoderChoice,
     #[serde(default = "default_client_host")]
@@ -164,6 +173,7 @@ impl Default for StreamConfig {
             height: None,
             framerate: None,
             bitrate: default_bitrate(),
+            audio_bitrate: default_audio_bitrate(),
             encoder: EncoderChoice::Auto,
             client_host: default_client_host(),
             audio: true,
@@ -241,7 +251,7 @@ impl ConfigStore {
 
     pub fn new_from_args() -> Self {
         let mut cfg = StreamConfig::default();
-        let mut args = std::env::args().skip(1);
+        let mut args = std::env::args().skip(1).peekable();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -267,19 +277,44 @@ impl ConfigStore {
                         }
                     }
                 }
+                "--audio-bitrate" => {
+                    if let Some(val) = args.next() {
+                        if let Ok(v) = val.parse() {
+                            cfg.audio_bitrate = v;
+                        }
+                    }
+                }
                 "--host" => {
                     if let Some(val) = args.next() {
                         cfg.client_host = val;
                     }
                 }
                 "--audio" => {
-                    if let Some(val) = args.next() {
-                        cfg.audio = val != "false";
+                    if let Some(next) = args.peek() {
+                        if next == "false" {
+                            cfg.audio = false;
+                            args.next();
+                        } else if next == "true" {
+                            cfg.audio = true;
+                            args.next();
+                        } else {
+                            cfg.audio = true;
+                        }
+                    } else {
+                        cfg.audio = true;
                     }
                 }
                 "--audio-only" => {
-                    if let Some(val) = args.next() {
-                        cfg.audio_only = val != "false";
+                    if let Some(next) = args.peek() {
+                        if next == "false" {
+                            cfg.audio_only = false;
+                            args.next();
+                        } else if next == "true" {
+                            cfg.audio_only = true;
+                            args.next();
+                        } else {
+                            cfg.audio_only = true;
+                        }
                     } else {
                         cfg.audio_only = true;
                     }
@@ -306,8 +341,16 @@ impl ConfigStore {
                     }
                 }
                 "--gdi" => {
-                    if let Some(val) = args.next() {
-                        cfg.gdi = val != "false";
+                    if let Some(next) = args.peek() {
+                        if next == "false" {
+                            cfg.gdi = false;
+                            args.next();
+                        } else if next == "true" {
+                            cfg.gdi = true;
+                            args.next();
+                        } else {
+                            cfg.gdi = true;
+                        }
                     } else {
                         cfg.gdi = true;
                     }
@@ -360,10 +403,11 @@ impl ConfigStore {
             }
         }
         info!(
-            "Pre-seeded config from args: encoder={:?} bitrate={} width={:?} height={:?} fps={:?} \
+            "Pre-seeded config from args: encoder={:?} bitrate={} audio_bitrate={}kbps width={:?} height={:?} fps={:?} \
             gdi={} monitor_index={} rc_mode={} key_int_max={} audio_only={}",
             cfg.encoder,
             cfg.bitrate,
+            cfg.audio_bitrate,
             cfg.width,
             cfg.height,
             cfg.framerate,
@@ -393,8 +437,13 @@ impl ConfigStore {
         });
         *guard = cfg;
         info!(
-            "Stream config updated: bitrate={}kbps encoder={:?} rc_mode={} monitor_index={} audio_only={}",
-            guard.bitrate, guard.encoder, guard.rc_mode, guard.monitor_index, guard.audio_only
+            "Stream config updated: bitrate={}kbps audio_bitrate={}kbps encoder={:?} rc_mode={} monitor_index={} audio_only={}",
+            guard.bitrate,
+            guard.audio_bitrate,
+            guard.encoder,
+            guard.rc_mode,
+            guard.monitor_index,
+            guard.audio_only
         );
     }
 }

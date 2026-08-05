@@ -26,13 +26,18 @@ impl PipelineBuilder {
         enc: &dyn encoders::VideoEncoder,
         ctx: &PlatformContext,
     ) -> String {
+        let audio_bitrate = cfg.audio_bitrate * 1000;
+
         if cfg.audio_only {
-            info!("Building Audio-Only streaming pipeline (bypassing video capture and encoding)");
+            info!(
+                "Building Audio-Only streaming pipeline (audio_bitrate={}bps)",
+                audio_bitrate
+            );
             let src = self::sys::audio_source();
             let mut audio = format!(
                 "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
-                audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 ! rtpopuspay",
-                src
+                audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 bitrate={} ! rtpopuspay",
+                src, audio_bitrate
             );
 
             if let Some(ref srtp_key) = cfg.srtp_key {
@@ -132,8 +137,8 @@ impl PipelineBuilder {
             let src = self::sys::audio_source();
             format!(
                 "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
-                audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 ! rtpopuspay",
-                src
+                audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 bitrate={} ! rtpopuspay",
+                src, audio_bitrate
             )
         } else {
             String::new()

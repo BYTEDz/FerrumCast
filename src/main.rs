@@ -20,7 +20,9 @@ fn get_token_file_path() -> std::path::PathBuf {
     if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
         std::path::PathBuf::from(config_home).join("ferrumcast.token")
     } else if let Ok(home) = std::env::var("HOME") {
-        std::path::PathBuf::from(home).join(".config").join("ferrumcast.token")
+        std::path::PathBuf::from(home)
+            .join(".config")
+            .join("ferrumcast.token")
     } else {
         std::path::PathBuf::from("/tmp/ferrumcast.token")
     }
@@ -87,15 +89,15 @@ async fn main() -> Result<()> {
     info!("available encoders: {:?}", caps.encoders);
 
     let config_store = Arc::new(config::ConfigStore::new_from_args());
+    let initial_cfg = config_store.get();
 
     #[cfg(target_os = "linux")]
     let token_path = get_token_file_path();
 
     #[cfg(target_os = "linux")]
     let initial_token = {
-        let cfg = config_store.get();
-        if cfg.token.is_some() {
-            cfg.token
+        if initial_cfg.token.is_some() {
+            initial_cfg.token.clone()
         } else {
             std::fs::read_to_string(&token_path).ok()
         }
@@ -112,8 +114,9 @@ async fn main() -> Result<()> {
     info!("binding IPC to {}", ipc_path);
     let server = Arc::new(ipc::IpcServer::new(ipc_path));
 
+    // Bypass XDG Screencast Portal authorization completely when in Audio-Only Mode!
     #[cfg(target_os = "linux")]
-    let portal_capture = if pipeline::PipelineBuilder::is_wayland() {
+    let portal_capture = if pipeline::PipelineBuilder::is_wayland() && !initial_cfg.audio_only {
         match portal::request_screencast(initial_token, Some(outbound_tx.clone())).await {
             Ok(c) => {
                 if let Some(ref t) = c.restore_token {
@@ -144,7 +147,6 @@ async fn main() -> Result<()> {
         portal_capture: portal_capture_arc.clone(),
     });
 
-    let initial_cfg = config_store.get();
     let enc = pipeline::encoders::resolve_encoder(&initial_cfg.encoder, &caps);
     let pipeline_str =
         pipeline::PipelineBuilder::build_pipeline(&initial_cfg, enc.as_ref(), &platform_ctx);
@@ -189,8 +191,8 @@ async fn main() -> Result<()> {
                             }
                             ipc::InboundMessage::Control(ipc::ControlMessage::RestartPipeline(cfg)) => {
                                 info!(
-                                    "restarting pipeline via IPC: host={} encoder={:?}",
-                                    cfg.client_host, cfg.encoder
+                                    "restarting pipeline via IPC: host={} encoder={:?} audio_only={}",
+                                    cfg.client_host, cfg.encoder, cfg.audio_only
                                 );
                                 config.set(cfg.clone());
 
