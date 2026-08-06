@@ -20,6 +20,37 @@ impl std::fmt::Debug for PlatformContext {
 
 pub struct PipelineBuilder;
 
+fn format_multiudpsink(client_hosts_raw: &str, port: u16, buffer_size: u32) -> String {
+    let hosts: Vec<&str> = client_hosts_raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if hosts.is_empty() {
+        format!(
+            "multiudpsink clients=\"127.0.0.1:{}\" sync=false async=false buffer-size={}",
+            port, buffer_size
+        )
+    } else {
+        let clients: Vec<String> = hosts
+            .iter()
+            .map(|h| {
+                if h.contains(':') {
+                    h.to_string()
+                } else {
+                    format!("{}:{}", h, port)
+                }
+            })
+            .collect();
+        format!(
+            "multiudpsink clients=\"{}\" sync=false async=false buffer-size={}",
+            clients.join(","),
+            buffer_size
+        )
+    }
+}
+
 impl PipelineBuilder {
     pub fn build_pipeline(
         cfg: &StreamConfig,
@@ -27,11 +58,12 @@ impl PipelineBuilder {
         ctx: &PlatformContext,
     ) -> String {
         let audio_bitrate = cfg.audio_bitrate * 1000;
+        let udp_buf = cfg.udp_buffer_size;
 
         if cfg.audio_only {
             info!(
-                "Building Audio-Only multi-client broadcast pipeline (audio_bitrate={}bps)",
-                audio_bitrate
+                "Building Audio-Only multi-client unicast stream pipeline (clients={}, audio_bitrate={}bps)",
+                cfg.client_host, audio_bitrate
             );
             let src = self::sys::audio_source();
             let mut audio = format!(
@@ -47,11 +79,8 @@ impl PipelineBuilder {
                 );
             }
 
-            let udp_buf = cfg.udp_buffer_size;
-            return format!(
-                "{} ! udpsink host=255.255.255.255 port=5006 auto-multicast=true sync=false async=false buffer-size={}",
-                audio, udp_buf
-            );
+            let audio_sink = format_multiudpsink(&cfg.client_host, 5006, udp_buf);
+            return format!("{} ! {}", audio, audio_sink);
         }
 
         let is_hw = enc.is_hardware();
@@ -157,21 +186,15 @@ impl PipelineBuilder {
             }
         }
 
-        let udp_buf = cfg.udp_buffer_size;
-
+        let video_sink = format_multiudpsink(&cfg.client_host, 5004, udp_buf);
         let audio_branch = if cfg.audio {
-            format!(
-                " {} ! udpsink host=255.255.255.255 port=5006 auto-multicast=true sync=false async=false buffer-size=1048576",
-                audio
-            )
+            let audio_sink = format_multiudpsink(&cfg.client_host, 5006, 1048576);
+            format!(" {} ! {}", audio, audio_sink)
         } else {
             String::new()
         };
 
-        format!(
-            "{} ! udpsink host={} port=5004 sync=false async=false buffer-size={}{}",
-            video, cfg.client_host, udp_buf, audio_branch
-        )
+        format!("{} ! {}{}", video, video_sink, audio_branch)
     }
 
     #[cfg(target_os = "linux")]
