@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
         std::env::set_var("NICE_DISABLE_UPNP", "1");
     }
     let subscriber = FmtSubscriber::builder()
+        .with_writer(std::io::stderr)
         .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;

@@ -1,4 +1,5 @@
 use gstreamer as gst;
+use gstreamer::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use tracing::{error, info, warn};
@@ -222,9 +223,19 @@ pub fn probe_capabilities() -> Capabilities {
     ];
 
     for (element, label) in &candidates {
-        if gst::ElementFactory::make(element).build().is_ok() {
-            info!("encoder available and instantiatable: {}", label);
-            encoders.push(label.to_string());
+        if let Ok(elem) = gst::ElementFactory::make(element).build() {
+            // Test State::Ready transition to verify actual GPU driver & device context initialization
+            if elem.set_state(gst::State::Ready).is_ok() {
+                let _ = elem.set_state(gst::State::Null);
+                info!("encoder available and verified: {}", label);
+                encoders.push(label.to_string());
+            } else {
+                let _ = elem.set_state(gst::State::Null);
+                warn!(
+                    "encoder element {} created but failed State::Ready initialization (no hardware/driver)",
+                    element
+                );
+            }
         } else {
             warn!(
                 "encoder factory found but failed to instantiate: {}",
