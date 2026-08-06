@@ -124,7 +124,8 @@ impl PipelineBuilder {
                 }
             }
         } else {
-            let mem_feature = if enc.gst_element() == "vah264enc" {
+            let is_vaapi = enc.gst_element() == "vah264enc" || enc.gst_element() == "vah265enc";
+            let mem_feature = if is_vaapi {
                 Some("video/x-raw(memory:VAMemory)")
             } else if enc.gst_element() == "nvh264enc" {
                 Some("video/x-raw(memory:GLMemory)")
@@ -132,7 +133,7 @@ impl PipelineBuilder {
                 None
             };
 
-            let conv = if enc.gst_element() == "vah264enc" {
+            let conv = if is_vaapi {
                 "vapostproc".to_string()
             } else if enc.gst_element() == "nvh264enc" {
                 "glcolorconvert".to_string()
@@ -146,21 +147,43 @@ impl PipelineBuilder {
 
         let qbufs = cfg.queue_max_buffers;
         let qtime = cfg.queue_max_time_ns;
+        let codec = enc.codec_name();
 
-        let mut video = format!(
-            "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
-            video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 disable-passthrough=true ! \
-            video/x-h264,stream-format=byte-stream,alignment=au ! \
-            queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
-            rtph264pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
-            video_src = video_src,
-            converter = converter,
-            caps = caps,
-            enc_element = enc.gst_element(),
-            enc_params = enc.encode_params(cfg),
-            mtu = cfg.rtp_mtu,
-            agg = cfg.aggregate_mode,
-        );
+        let mut video = if codec == "h265" {
+            format!(
+                "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
+                video/x-h265 ! h265parse config-interval=-1 disable-passthrough=true ! \
+                video/x-h265,stream-format=byte-stream,alignment=au ! \
+                queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
+                rtph265pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
+                video_src = video_src,
+                converter = converter,
+                caps = caps,
+                enc_element = enc.gst_element(),
+                enc_params = enc.encode_params(cfg),
+                qbufs = qbufs,
+                qtime = qtime,
+                mtu = cfg.rtp_mtu,
+                agg = cfg.aggregate_mode,
+            )
+        } else {
+            format!(
+                "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
+                video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 disable-passthrough=true ! \
+                video/x-h264,stream-format=byte-stream,alignment=au ! \
+                queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
+                rtph264pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
+                video_src = video_src,
+                converter = converter,
+                caps = caps,
+                enc_element = enc.gst_element(),
+                enc_params = enc.encode_params(cfg),
+                qbufs = qbufs,
+                qtime = qtime,
+                mtu = cfg.rtp_mtu,
+                agg = cfg.aggregate_mode,
+            )
+        };
 
         let mut audio = if cfg.audio {
             let src = self::sys::audio_source();

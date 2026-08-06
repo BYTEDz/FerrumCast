@@ -10,11 +10,17 @@ pub enum EncoderChoice {
     #[default]
     Auto,
     X264,
+    X265,
     VaH264,
+    VaH265,
     Nvenc,
+    NvencH265,
     Qsv,
+    QsvH265,
     Amf,
+    AmfH265,
     Mf,
+    MfH265,
 }
 
 fn default_speed_preset() -> String {
@@ -214,17 +220,22 @@ pub fn probe_capabilities() -> Capabilities {
     let mut encoders = Vec::new();
 
     let candidates = [
+        ("nvh265enc", "nvenc_h265"),
         ("nvh264enc", "nvenc"),
+        ("mfh265enc", "windows_mf_h265"),
         ("mfh264enc", "windows_mf"),
+        ("amfh265enc", "amd_amf_h265"),
         ("amfh264enc", "amd_amf"),
+        ("qsvh265enc", "intel_qsv_h265"),
         ("qsvh264enc", "intel_qsv"),
+        ("vah265enc", "vah265"),
         ("vah264enc", "vah264"),
+        ("x265enc", "x265"),
         ("x264enc", "x264"),
     ];
 
     for (element, label) in &candidates {
         if let Ok(elem) = gst::ElementFactory::make(element).build() {
-            // Test State::Ready transition to verify actual GPU driver & device context initialization
             if elem.set_state(gst::State::Ready).is_ok() {
                 let _ = elem.set_state(gst::State::Null);
                 info!("encoder available and verified: {}", label);
@@ -269,11 +280,17 @@ impl ConfigStore {
                 "--encoder" => {
                     if let Some(val) = args.next() {
                         cfg.encoder = match val.to_lowercase().as_str() {
-                            "vah264" => EncoderChoice::VaH264,
+                            "nvenc_h265" | "nvenc-h265" | "nvenc265" => EncoderChoice::NvencH265,
                             "nvenc" => EncoderChoice::Nvenc,
-                            "qsv" => EncoderChoice::Qsv,
-                            "amf" => EncoderChoice::Amf,
-                            "mf" => EncoderChoice::Mf,
+                            "windows_mf_h265" | "mf_h265" | "mf265" => EncoderChoice::MfH265,
+                            "mf" | "windows_mf" => EncoderChoice::Mf,
+                            "amd_amf_h265" | "amf_h265" | "amf265" => EncoderChoice::AmfH265,
+                            "amf" | "amd_amf" => EncoderChoice::Amf,
+                            "intel_qsv_h265" | "qsv_h265" | "qsv265" => EncoderChoice::QsvH265,
+                            "qsv" | "intel_qsv" => EncoderChoice::Qsv,
+                            "vah265" => EncoderChoice::VaH265,
+                            "vah264" => EncoderChoice::VaH264,
+                            "x265" => EncoderChoice::X265,
                             "x264" => EncoderChoice::X264,
                             _ => EncoderChoice::Auto,
                         };

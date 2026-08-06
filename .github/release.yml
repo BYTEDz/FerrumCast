@@ -4,22 +4,40 @@ changelog:
       labels:
         - "feature"
         - "enhancement"
+      keywords:
+        - "feat"
+        - "feature"
+        - "add"
     - title: "Bug Fixes"
       labels:
         - "bug"
         - "fix"
+      keywords:
+        - "fix"
+        - "bug"
     - title: "Performance & Optimizations"
       labels:
         - "performance"
+      keywords:
+        - "perf"
+        - "performance"
+        - "optimize"
     - title: "Refactoring & Internal Changes"
       labels:
         - "refactor"
         - "internal"
+      keywords:
+        - "refactor"
+        - "clean"
     - title: "Maintenance & CI"
       labels:
         - "chore"
         - "documentation"
         - "ci"
+      keywords:
+        - "chore"
+        - "ci"
+        - "doc"
   exclude:
     labels:
       - "ignore-release"

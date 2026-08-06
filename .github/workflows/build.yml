@@ -65,38 +65,45 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # Dependency Installation
+      # Linux Dependency Installation with Check
       - name: Install Linux dependencies
         if: startsWith(matrix.os, 'ubuntu')
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libpipewire-0.3-dev libxdo-dev pkg-config
+          if ! pkg-config --exists gstreamer-1.0; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libpipewire-0.3-dev libxdo-dev pkg-config
+          fi
 
-      - name: Cache GStreamer installation (Windows)
+      # Smart Windows GStreamer Caching
+      - name: Cache GStreamer Installer (Windows)
         if: startsWith(matrix.os, 'windows')
-        id: cache-gst
+        id: cache-gst-exe
         uses: actions/cache@v5
         with:
-          path: C:\gstreamer
-          key: gstreamer-msvc-${{ matrix.target }}-${{ env.GST_VERSION }}
+          path: ${{ runner.temp }}\gstreamer-installer.exe
+          key: gstreamer-exe-msvc-${{ env.GST_VERSION }}
 
-      - name: Install pkg-config (Windows)
-        if: startsWith(matrix.os, 'windows')
-        shell: powershell
-        run: |
-          choco install -y pkgconfiglite
-
-      - name: Setup Windows GStreamer (MSVC)
-        if: startsWith(matrix.os, 'windows') && steps.cache-gst.outputs.cache-hit != 'true'
+      - name: Download GStreamer Installer (Windows)
+        if: startsWith(matrix.os, 'windows') && steps.cache-gst-exe.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $version = "${{ env.GST_VERSION }}"
           $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$version/msvc/gstreamer-1.0-msvc-x86_64-$version.exe"
+          $exePath = "${{ runner.temp }}\gstreamer-installer.exe"
+          Write-Host "Downloading GStreamer Installer $version..."
+          curl.exe -L -o $exePath $url
+
+      - name: Install GStreamer (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        run: |
           $gstreamerRoot = "C:\gstreamer\1.0\msvc_x86_64"
-          Write-Host "Downloading Unified GStreamer Installer $version..."
-          curl.exe -L -o gstreamer-installer.exe $url
-          Write-Host "Installing GStreamer to $gstreamerRoot..."
-          Start-Process gstreamer-installer.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLUSERS', '/TYPE=devel', "/DIR=$gstreamerRoot" -NoNewWindow -Wait
+          $exePath = "${{ runner.temp }}\gstreamer-installer.exe"
+          
+          if (-Not (Test-Path $gstreamerRoot)) {
+              Write-Host "Installing GStreamer to $gstreamerRoot from cached installer..."
+              Start-Process $exePath -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLUSERS', '/TYPE=devel', "/DIR=$gstreamerRoot" -NoNewWindow -Wait
+          }
           if (-Not (Test-Path $gstreamerRoot)) { throw "GStreamer installation failed" }
 
       - name: Set GStreamer environment variables (Windows)
@@ -108,12 +115,12 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG_PATH=$gstreamerRoot\lib\pkgconfig"
           Add-Content -Path $env:GITHUB_PATH -Value "$gstreamerRoot\bin"
 
-      # Build Stage
+      # Fast Build Stage
       - name: Build Binary (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: powershell
         env:
-          CARGO_PROFILE_RELEASE_LTO: "true"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
           CARGO_PROFILE_RELEASE_STRIP: "true"
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -121,7 +128,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         shell: bash
         env:
-          CARGO_PROFILE_RELEASE_LTO: "true"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
           CARGO_PROFILE_RELEASE_STRIP: "true"
         run: cargo build --release --target ${{ matrix.target }}
 
@@ -143,14 +150,14 @@ jobs:
           $exePath = Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe"
           Copy-Item -Path $exePath -Destination $dist -Force
 
-          # 2. Copy required GStreamer plugins — flat into dist root (no subfolder)
-          #    Flat layout avoids GST_PLUGIN_PATH / registry crawl failures on Windows
+          # 2. Copy required GStreamer plugins
           $essentialPlugins = @(
               'gstapp.dll', 'gstaudioconvert.dll', 'gstaudioresample.dll', 'gstautodetect.dll',
               'gstcoreelements.dll', 'gstd3d11.dll', 'gstmediafoundation.dll', 'gstnvcodec.dll',
               'gstopus.dll', 'gstqsv.dll', 'gstrtp.dll', 'gstsrtp.dll', 'gstudp.dll',
               'gstvideoconvertscale.dll', 'gstvideoconvert.dll', 'gstvideorate.dll',
-              'gstvideoscale.dll', 'gstvideoparsersbad.dll', 'gstwasapi.dll', 'gstx264.dll'
+              'gstvideoscale.dll', 'gstvideoparsersbad.dll', 'gstwasapi.dll',
+              'gstamfcodec.dll', 'gstx265.dll', 'gstx264.dll'
           )
 
           foreach ($plugin in $essentialPlugins) {
@@ -163,7 +170,6 @@ jobs:
           }
 
           # 3. Smart Recursive Dependency Finder for runtime DLLs
-          #    Reads raw bytes — catches deps the linker table lists; all dumped to dist root
           function Get-DllDependencies($filePath) {
               $bytes = [System.IO.File]::ReadAllBytes($filePath)
               $text  = [System.Text.Encoding]::ASCII.GetString($bytes)
@@ -174,7 +180,6 @@ jobs:
           $processed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
           $queue     = [System.Collections.Generic.Queue[string]]::new()
 
-          # Seed queue with exe + all plugin DLLs already in dist
           Get-ChildItem -Path $dist -Filter "*.exe" | ForEach-Object { $queue.Enqueue($_.FullName) }
           Get-ChildItem -Path $dist -Filter "*.dll" | ForEach-Object { $queue.Enqueue($_.FullName) }
 
@@ -194,7 +199,7 @@ jobs:
               }
           }
 
-          # 4. gst-plugin-scanner.exe — dump into dist root alongside everything else
+          # 4. gst-plugin-scanner.exe
           $scanner = Join-Path $env:GSTREAMER_ROOT 'libexec\gstreamer-1.0\gst-plugin-scanner.exe'
           if (Test-Path $scanner) {
               Copy-Item -Path $scanner -Destination $dist -Force
@@ -238,9 +243,17 @@ jobs:
           pattern: build-artifact-*
           merge-multiple: true
 
+      - name: Generate Organized Changelog
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          configuration: ".github/release.yml"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release-artifacts/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          body: ${{ steps.build_changelog.outputs.changelog }}
