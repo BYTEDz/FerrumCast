@@ -133,20 +133,18 @@ jobs:
           $ver = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v0.1.0" }
           $zipName = "ferrumcast-$ver-${{ matrix.target }}.zip"
           $dist = Join-Path $PWD dist
-          $distPlugins = Join-Path $dist 'gstreamer-1.0'
-          $distScannerDir = Join-Path $dist 'libexec\gstreamer-1.0'
 
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          New-Item -ItemType Directory -Force -Path $distPlugins | Out-Null
 
-          $gstBin = Join-Path $env:GSTREAMER_ROOT 'bin'
+          $gstBin     = Join-Path $env:GSTREAMER_ROOT 'bin'
           $gstPlugins = Join-Path $env:GSTREAMER_ROOT 'lib\gstreamer-1.0'
 
           # 1. Copy main binary
           $exePath = Join-Path "target/${{ matrix.target }}/release" "ferrumcast.exe"
           Copy-Item -Path $exePath -Destination $dist -Force
 
-          # 2. Select required GStreamer streaming plugins
+          # 2. Copy required GStreamer plugins — flat into dist root (no subfolder)
+          #    Flat layout avoids GST_PLUGIN_PATH / registry crawl failures on Windows
           $essentialPlugins = @(
               'gstapp.dll', 'gstaudioconvert.dll', 'gstaudioresample.dll', 'gstautodetect.dll',
               'gstcoreelements.dll', 'gstd3d11.dll', 'gstmediafoundation.dll', 'gstnvcodec.dll',
@@ -158,48 +156,48 @@ jobs:
           foreach ($plugin in $essentialPlugins) {
               $pSrc = Join-Path $gstPlugins $plugin
               if (Test-Path $pSrc) {
-                  Copy-Item -Path $pSrc -Destination $distPlugins -Force
+                  Copy-Item -Path $pSrc -Destination $dist -Force
+              } else {
+                  Write-Warning "Plugin not found: $plugin"
               }
           }
 
           # 3. Smart Recursive Dependency Finder for runtime DLLs
+          #    Reads raw bytes — catches deps the linker table lists; all dumped to dist root
           function Get-DllDependencies($filePath) {
               $bytes = [System.IO.File]::ReadAllBytes($filePath)
-              $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-              $matches = [regex]::Matches($text, '(?i)[a-z0-9_\-]+\.dll')
-              return $matches.Value | Select-Object -Unique
+              $text  = [System.Text.Encoding]::ASCII.GetString($bytes)
+              $m     = [regex]::Matches($text, '(?i)[a-z0-9_\-]+\.dll')
+              return $m.Value | Select-Object -Unique
           }
 
           $processed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-          $queue = [System.Collections.Generic.Queue[string]]::new()
+          $queue     = [System.Collections.Generic.Queue[string]]::new()
 
-          # Enqueue ferrumcast.exe and all copied plugin DLLs as dependency analysis targets
-          Get-ChildItem -Path $dist -Recurse -Filter "*.exe" | ForEach-Object { $queue.Enqueue($_.FullName) }
-          Get-ChildItem -Path $distPlugins -Filter "*.dll" | ForEach-Object { $queue.Enqueue($_.FullName) }
+          # Seed queue with exe + all plugin DLLs already in dist
+          Get-ChildItem -Path $dist -Filter "*.exe" | ForEach-Object { $queue.Enqueue($_.FullName) }
+          Get-ChildItem -Path $dist -Filter "*.dll" | ForEach-Object { $queue.Enqueue($_.FullName) }
 
           while ($queue.Count -gt 0) {
               $targetPath = $queue.Dequeue()
               if ($processed.Contains($targetPath)) { continue }
               $processed.Add($targetPath) | Out-Null
 
-              $deps = Get-DllDependencies -filePath $targetPath
-              foreach ($dep in $deps) {
-                  $candidateGstDll = Join-Path $gstBin $dep
-                  $distDestination = Join-Path $dist $dep
-
-                  if ((Test-Path $candidateGstDll) -and -not (Test-Path $distDestination)) {
-                      Write-Host "Smart Finder: Including required dependency $dep (for $(Split-Path $targetPath -Leaf))"
-                      Copy-Item -Path $candidateGstDll -Destination $distDestination -Force
-                      $queue.Enqueue($distDestination)
+              foreach ($dep in (Get-DllDependencies -filePath $targetPath)) {
+                  $src  = Join-Path $gstBin $dep
+                  $dest = Join-Path $dist   $dep
+                  if ((Test-Path $src) -and -not (Test-Path $dest)) {
+                      Write-Host "Dep: $dep  (needed by $(Split-Path $targetPath -Leaf))"
+                      Copy-Item -Path $src -Destination $dest -Force
+                      $queue.Enqueue($dest)
                   }
               }
           }
 
-          # 4. Copy gst-plugin-scanner.exe helper
+          # 4. gst-plugin-scanner.exe — dump into dist root alongside everything else
           $scanner = Join-Path $env:GSTREAMER_ROOT 'libexec\gstreamer-1.0\gst-plugin-scanner.exe'
           if (Test-Path $scanner) {
-              New-Item -ItemType Directory -Force -Path $distScannerDir | Out-Null
-              Copy-Item -Path $scanner -Destination $distScannerDir -Force
+              Copy-Item -Path $scanner -Destination $dist -Force
           }
 
           Compress-Archive -Path (Join-Path $dist '*') -DestinationPath (Join-Path $PWD $zipName) -Force

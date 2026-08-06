@@ -62,11 +62,11 @@ async fn main() -> Result<()> {
     {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                let local_plugins = exe_dir.join("lib/gstreamer-1.0");
-                let local_scanner = exe_dir.join("libexec/gstreamer-1.0/gst-plugin-scanner.exe");
-                if local_plugins.exists() {
-                    unsafe {
-                        std::env::set_var("GST_PLUGIN_PATH", &local_plugins);
+                let local_scanner = exe_dir.join("gst-plugin-scanner.exe");
+                unsafe {
+                    std::env::set_var("GST_PLUGIN_PATH", exe_dir);
+                    std::env::set_var("GST_PLUGIN_SYSTEM_PATH", "");
+                    if local_scanner.exists() {
                         std::env::set_var("GST_PLUGIN_SCANNER", &local_scanner);
                     }
                 }
