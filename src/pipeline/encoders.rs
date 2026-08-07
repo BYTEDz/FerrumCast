@@ -468,50 +468,50 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
         EncoderChoice::X265 if has("x265") => Box::new(X265Encoder),
         EncoderChoice::X264 => Box::new(X264Encoder),
         EncoderChoice::Auto => {
-            if has("nvenc_h265") {
-                return Box::new(NvencH265Encoder);
-            }
             if has("nvenc") {
                 return Box::new(NvencEncoder);
             }
-            if has("intel_qsv_h265") {
-                return Box::new(QsvH265Encoder);
+            if has("nvenc_h265") {
+                return Box::new(NvencH265Encoder);
             }
             if has("intel_qsv") {
                 return Box::new(QsvEncoder);
             }
-            if has("amd_amf_h265") {
-                return Box::new(AmfH265Encoder);
+            if has("intel_qsv_h265") {
+                return Box::new(QsvH265Encoder);
             }
             if has("amd_amf") {
                 return Box::new(AmfEncoder);
             }
+            if has("amd_amf_h265") {
+                return Box::new(AmfH265Encoder);
+            }
 
             #[cfg(target_os = "linux")]
             {
-                if has("vah265") {
-                    return Box::new(VaH265Encoder);
-                }
                 if has("vah264") {
                     return Box::new(VaH264Encoder);
                 }
-            }
-
-            if has("x265") {
-                return Box::new(X265Encoder);
-            }
-            if has("x264") {
-                return Box::new(X264Encoder);
+                if has("vah265") {
+                    return Box::new(VaH265Encoder);
+                }
             }
 
             #[cfg(target_os = "windows")]
             {
-                if has("windows_mf_h265") {
-                    return Box::new(MfH265Encoder);
-                }
                 if has("windows_mf") {
                     return Box::new(MfEncoder);
                 }
+                if has("windows_mf_h265") {
+                    return Box::new(MfH265Encoder);
+                }
+            }
+
+            if has("x264") {
+                return Box::new(X264Encoder);
+            }
+            if has("x265") {
+                return Box::new(X265Encoder);
             }
 
             Box::new(X264Encoder)
