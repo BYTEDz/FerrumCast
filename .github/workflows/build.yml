@@ -169,11 +169,11 @@ jobs:
               }
           }
 
-          # 3. Smart Recursive Dependency Finder for runtime DLLs
+          # 3. Recursive Dependency Finder for runtime DLLs (Fixed Regex to include version dots)
           function Get-DllDependencies($filePath) {
               $bytes = [System.IO.File]::ReadAllBytes($filePath)
               $text  = [System.Text.Encoding]::ASCII.GetString($bytes)
-              $m     = [regex]::Matches($text, '(?i)[a-z0-9_\-]+\.dll')
+              $m     = [regex]::Matches($text, '(?i)[\w\.\-]+\.dll')
               return $m.Value | Select-Object -Unique
           }
 
