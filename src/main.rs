@@ -15,6 +15,17 @@ use tracing_subscriber::FmtSubscriber;
 
 use std::sync::Arc;
 
+#[cfg(target_os = "windows")]
+unsafe extern "system" {
+    fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
+    fn SetDefaultDllDirectories(DirectoryFlags: u32) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+const LOAD_LIBRARY_SEARCH_APPLICATION_DIR: u32 = 0x00000200;
+#[cfg(target_os = "windows")]
+const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x00000800;
+
 #[cfg(target_os = "linux")]
 fn get_token_file_path() -> std::path::PathBuf {
     if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
@@ -35,6 +46,26 @@ async fn main() -> Result<()> {
     #[cfg(target_os = "windows")]
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
+
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                use std::os::windows::ffi::OsStrExt;
+                let wide: Vec<u16> = exe_dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+                // Strict Isolation: ONLY search application directory + Windows System32.
+                // Completely blocks Windows from searching environment PATH or external GStreamer installations.
+                SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+                SetDllDirectoryW(wide.as_ptr());
+
+                std::env::set_var("GST_PLUGIN_PATH", exe_dir);
+                std::env::set_var("GST_PLUGIN_SYSTEM_PATH", "");
+
+                let local_scanner = exe_dir.join("gst-plugin-scanner.exe");
+                if local_scanner.exists() {
+                    std::env::set_var("GST_PLUGIN_SCANNER", &local_scanner);
+                }
+            }
+        }
     }
 
     unsafe {
@@ -57,32 +88,6 @@ async fn main() -> Result<()> {
     }
 
     let (outbound_tx, _outbound_rx) = tokio::sync::broadcast::channel(32);
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let local_scanner = exe_dir.join("gst-plugin-scanner.exe");
-                unsafe {
-                    std::env::set_var("GST_PLUGIN_PATH", exe_dir);
-                    std::env::set_var("GST_PLUGIN_SYSTEM_PATH", "");
-                    if local_scanner.exists() {
-                        std::env::set_var("GST_PLUGIN_SCANNER", &local_scanner);
-                    }
-                }
-
-                if let Some(path) = std::env::var_os("PATH") {
-                    let mut paths = std::env::split_paths(&path).collect::<Vec<_>>();
-                    paths.insert(0, exe_dir.to_path_buf());
-                    if let Ok(new_path) = std::env::join_paths(paths) {
-                        unsafe {
-                            std::env::set_var("PATH", new_path);
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     gstreamer::init().expect("Failed to initialize gstreamer");
 
