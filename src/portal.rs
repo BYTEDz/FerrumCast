@@ -38,6 +38,8 @@ pub async fn request_screencast(
             SelectSourcesOptions::default()
                 .set_cursor_mode(Some(CursorMode::Embedded))
                 .set_restore_token(restore_token.as_deref())
+                // ExplicitlyRevoked = persist until manually revoked (ashpd naming is inverted
+                // vs intuition — this IS the "keep token alive" mode, NOT DoNot or Application)
                 .set_persist_mode(Some(PersistMode::ExplicitlyRevoked)),
         )
         .await?;

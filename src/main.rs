@@ -123,7 +123,19 @@ async fn main() -> Result<()> {
     // Bypass XDG Screencast Portal authorization completely when in Audio-Only Mode!
     #[cfg(target_os = "linux")]
     let portal_capture = if pipeline::PipelineBuilder::is_wayland() && !initial_cfg.audio_only {
-        match portal::request_screencast(initial_token, Some(outbound_tx.clone())).await {
+        // Try with the saved restore token first; if that fails (stale/revoked),
+        // delete the dead token file and retry once with a fresh portal prompt.
+        let capture_result = portal::request_screencast(initial_token.clone(), Some(outbound_tx.clone())).await;
+        let capture_result = match capture_result {
+            Ok(c) => Ok(c),
+            Err(ref e) if initial_token.is_some() => {
+                error!("portal failed with saved token (token may be stale): {}. Deleting token and retrying fresh.", e);
+                let _ = std::fs::remove_file(&token_path);
+                portal::request_screencast(None, Some(outbound_tx.clone())).await
+            }
+            Err(e) => Err(e),
+        };
+        match capture_result {
             Ok(c) => {
                 if let Some(ref t) = c.restore_token {
                     info!("persisting portal token to {:?}", token_path);
