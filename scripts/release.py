@@ -49,6 +49,8 @@ def generate_recent_commit_summary(version: str) -> str:
         if len(parts) == 3:
             commit_hash, author, subject = parts
 
+            author_str = f"**{author}**" if " " in author else f"@{author}"
+
             pr_match = re.search(r"\s*\(#(\d+)\)$", subject)
             if pr_match:
                 pr_num = pr_match.group(1)
@@ -58,7 +60,7 @@ def generate_recent_commit_summary(version: str) -> str:
                 clean_subject = subject
                 ref_str = f"in {commit_hash}"
 
-            lines.append(f"- {clean_subject} by @{author} {ref_str}")
+            lines.append(f"- {clean_subject} by {author_str} {ref_str}")
 
     return "\n".join(lines)
 
