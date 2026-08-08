@@ -44,10 +44,18 @@ const VERSION: &str = env!("FERRUMCAST_BUILD_VERSION");
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("ferrumcast {}", VERSION);
         return Ok(());
     }
+
+    if args.iter().any(|arg| arg == "--probe") {
+        gstreamer::init().expect("Failed to initialize gstreamer");
+        let caps = pipeline::PipelineBuilder::probe_capabilities();
+        println!("{}", serde_json::to_string(&caps).unwrap());
+        return Ok(());
+    }
+
     #[cfg(target_os = "windows")]
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
@@ -55,11 +63,15 @@ async fn main() -> Result<()> {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
                 use std::os::windows::ffi::OsStrExt;
-                let wide: Vec<u16> = exe_dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+                let wide: Vec<u16> = exe_dir
+                    .as_os_str()
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
 
-                // Strict Isolation: ONLY search application directory + Windows System32.
-                // Completely blocks Windows from searching environment PATH or external GStreamer installations.
-                SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+                SetDefaultDllDirectories(
+                    LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
+                );
                 SetDllDirectoryW(wide.as_ptr());
 
                 std::env::set_var("GST_PLUGIN_PATH", exe_dir);
@@ -83,14 +95,6 @@ async fn main() -> Result<()> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     info!("starting ferrumcast engine v{}", VERSION);
-
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|arg| arg == "--probe") {
-        gstreamer::init().expect("Failed to initialize gstreamer");
-        let caps = pipeline::PipelineBuilder::probe_capabilities();
-        println!("{}", serde_json::to_string(&caps).unwrap());
-        std::process::exit(0);
-    }
 
     let (outbound_tx, _outbound_rx) = tokio::sync::broadcast::channel(32);
 
@@ -125,16 +129,17 @@ async fn main() -> Result<()> {
     info!("binding IPC to {}", ipc_path);
     let server = Arc::new(ipc::IpcServer::new(ipc_path));
 
-    // Bypass XDG Screencast Portal authorization completely when in Audio-Only Mode!
     #[cfg(target_os = "linux")]
     let portal_capture = if pipeline::PipelineBuilder::is_wayland() && !initial_cfg.audio_only {
-        // Try with the saved restore token first; if that fails (stale/revoked),
-        // delete the dead token file and retry once with a fresh portal prompt.
-        let capture_result = portal::request_screencast(initial_token.clone(), Some(outbound_tx.clone())).await;
+        let capture_result =
+            portal::request_screencast(initial_token.clone(), Some(outbound_tx.clone())).await;
         let capture_result = match capture_result {
             Ok(c) => Ok(c),
             Err(ref e) if initial_token.is_some() => {
-                error!("portal failed with saved token (token may be stale): {}. Deleting token and retrying fresh.", e);
+                error!(
+                    "portal failed with saved token (token may be stale): {}. Deleting token and retrying fresh.",
+                    e
+                );
                 let _ = std::fs::remove_file(&token_path);
                 portal::request_screencast(None, Some(outbound_tx.clone())).await
             }

@@ -45,6 +45,17 @@ jobs:
           ref: ${{ github.repository != 'BYTEDz/FerrumCast' && 'main' || github.ref }}
           fetch-depth: 0
 
+      # Synchronize Cargo.toml version field with release tag version
+      - name: Sync Cargo.toml version with release tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          if [[ "$TAG" =~ ^v[0-9] ]]; then
+            echo "Synchronizing Cargo.toml package version to ${VERSION}..."
+            sed -i -E "s/^version = \"[^\"]+\"/version = \"${VERSION}\"/" Cargo.toml
+          fi
+
       # Rust Toolchain Setup & Cache
       - name: Install Rust (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -169,7 +180,7 @@ jobs:
               }
           }
 
-          # 3. Recursive Dependency Finder for runtime DLLs (Fixed Regex to include version dots)
+          # 3. Recursive Dependency Finder for runtime DLLs
           function Get-DllDependencies($filePath) {
               $bytes = [System.IO.File]::ReadAllBytes($filePath)
               $text  = [System.Text.Encoding]::ASCII.GetString($bytes)
@@ -236,6 +247,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository for changelog generation
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -243,17 +259,19 @@ jobs:
           pattern: build-artifact-*
           merge-multiple: true
 
-      - name: Generate Organized Changelog
-        id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          configuration: ".github/release.yml"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          python-version: '3.x'
+
+      - name: Generate Custom Release Notes
+        shell: bash
+        run: |
+          python3 .github/scripts/generate_release_notes.py --to HEAD --output RELEASE_NOTES.md --emoji
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release-artifacts/*
           fail_on_unmatched_files: true
-          body: ${{ steps.build_changelog.outputs.changelog }}
+          body_path: RELEASE_NOTES.md
