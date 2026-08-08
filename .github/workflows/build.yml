@@ -267,7 +267,7 @@ jobs:
       - name: Generate Custom Release Notes
         shell: bash
         run: |
-          python3 .github/scripts/generate_release_notes.py --to HEAD --output RELEASE_NOTES.md --emoji
+          python3 .github/scripts/generate_release_notes.py --to HEAD --output RELEASE_NOTES.md
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2

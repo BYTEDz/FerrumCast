@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -8,7 +12,7 @@ import urllib.request
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
-CATEGORY_MAPPING_CLEAN = {
+CATEGORY_MAPPING = {
     "feat": "Features & Additions",
     "feature": "Features & Additions",
     "add": "Features & Additions",
@@ -39,38 +43,7 @@ CATEGORY_MAPPING_CLEAN = {
     "style": "Style & Formatting",
 }
 
-CATEGORY_MAPPING_EMOJI = {
-    "feat": "🚀 Features & Additions",
-    "feature": "🚀 Features & Additions",
-    "add": "🚀 Features & Additions",
-    "added": "🚀 Features & Additions",
-    "fix": "🐛 Bug Fixes",
-    "bugfix": "🐛 Bug Fixes",
-    "remove": "🗑️ Removals & Deprecations",
-    "removed": "🗑️ Removals & Deprecations",
-    "delete": "🗑️ Removals & Deprecations",
-    "deleted": "🗑️ Removals & Deprecations",
-    "deprecate": "🗑️ Removals & Deprecations",
-    "deprecated": "🗑️ Removals & Deprecations",
-    "drop": "🗑️ Removals & Deprecations",
-    "revert": "⏪ Reverts",
-    "reverted": "⏪ Reverts",
-    "sec": "🔒 Security Fixes",
-    "security": "🔒 Security Fixes",
-    "perf": "⚡ Performance Improvements",
-    "refactor": "🛠️ Refactoring",
-    "docs": "📝 Documentation",
-    "doc": "📝 Documentation",
-    "test": "🧪 Tests",
-    "tests": "🧪 Tests",
-    "chore": "🧹 Chores & Maintenance",
-    "deps": "🧹 Chores & Maintenance",
-    "build": "🧹 Chores & Maintenance",
-    "ci": "⚙️ CI/CD",
-    "style": "🎨 Style & Formatting",
-}
-
-ORDERED_CATEGORIES_CLEAN = [
+ORDERED_CATEGORIES = [
     "Features & Additions",
     "Bug Fixes",
     "Security Fixes",
@@ -86,24 +59,6 @@ ORDERED_CATEGORIES_CLEAN = [
     "Other Changes",
 ]
 
-ORDERED_CATEGORIES_EMOJI = [
-    "🚀 Features & Additions",
-    "🐛 Bug Fixes",
-    "🔒 Security Fixes",
-    "🗑️ Removals & Deprecations",
-    "⏪ Reverts",
-    "⚡ Performance Improvements",
-    "🛠️ Refactoring",
-    "📝 Documentation",
-    "🧪 Tests",
-    "🧹 Chores & Maintenance",
-    "⚙️ CI/CD",
-    "🎨 Style & Formatting",
-    "🔄 Other Changes",
-]
-
-# Cache to map Git Author Name -> GitHub Username
-# This prevents duplicate API calls for the same author
 AUTHOR_CACHE: Dict[str, Optional[str]] = {}
 
 
@@ -131,32 +86,26 @@ def get_latest_tags() -> List[str]:
         return []
 
 
-def get_initial_commit() -> str:
-    """Gets the first commit hash of the repository."""
-    return run_git_command(["git", "rev-list", "--max-parents=0", "HEAD"])
-
-
 def get_remote_url() -> Optional[str]:
     """Attempts to auto-detect the web URL of the remote origin repository."""
     try:
         url = run_git_command(["git", "config", "--get", "remote.origin.url"])
         if not url:
             return None
-        
+
         if url.endswith(".git"):
             url = url[:-4]
-            
-        # Convert SSH style (git@github.com:user/repo) to HTTPS URL
+
         if url.startswith("git@"):
             parts = url.split(":", 1)
             if len(parts) == 2:
                 host = parts[0].replace("git@", "")
                 path = parts[1]
                 return f"https://{host}/{path}"
-                
+
         if url.startswith("http://") or url.startswith("https://"):
             return url
-            
+
         return None
     except Exception:
         return None
@@ -174,8 +123,8 @@ def fetch_github_username(owner: str, repo: str, commit_hash: str) -> Optional[s
     """Queries GitHub API to resolve a commit hash to a GitHub username."""
     url = f"https://api.github.com/repos/{owner}/{repo}/commits/{commit_hash}"
     req = urllib.request.Request(
-        url, 
-        headers={"User-Agent": "Git-Release-Notes-Generator-Python"}
+        url,
+        headers={"User-Agent": "Git-Release-Notes-Generator-Python"},
     )
     try:
         with urllib.request.urlopen(req, timeout=3) as response:
@@ -202,13 +151,12 @@ def parse_commit_line(line: str) -> Optional[Dict]:
     parts = line.split("|", 3)
     if len(parts) < 4:
         return None
-    
+
     commit_hash, author, email, subject = parts
-    
-    # 1. Conventional Commit regex pattern: type(scope)!: message
+
     pattern = r"^(?P<type>[a-zA-Z]+)(?:\((?P<scope>[^)]+)\))?(?P<breaking>!)?:\s*(?P<message>.+)$"
     match = re.match(pattern, subject)
-    
+
     if match:
         gd = match.groupdict()
         return {
@@ -219,10 +167,9 @@ def parse_commit_line(line: str) -> Optional[Dict]:
             "scope": gd["scope"],
             "breaking": bool(gd["breaking"]),
             "message": gd["message"],
-            "raw_subject": subject
+            "raw_subject": subject,
         }
 
-    # 2. Fallback heuristic detection for non-conventional commit messages
     lower_subj = subject.strip().lower()
     is_breaking = "breaking change" in lower_subj or "breaking:" in lower_subj
     detected_type = "other"
@@ -258,60 +205,61 @@ def parse_commit_line(line: str) -> Optional[Dict]:
         "scope": None,
         "breaking": is_breaking,
         "message": subject,
-        "raw_subject": subject
+        "raw_subject": subject,
     }
 
 
 def format_commit_entry(commit: Dict, repo_url: Optional[str]) -> str:
-    """Formats a single commit line with clickable links."""
+    """Formats a commit entry matching: <subject> by <author> in <PR/hash>."""
     author_display = f"@{commit['author']}"
-    
+
     if repo_url and "github.com" in repo_url:
         git_author = commit["author"]
-        
-        # Check cache first
+
         if git_author in AUTHOR_CACHE:
             github_username = AUTHOR_CACHE[git_author]
         else:
-            # Try parsing from standard GitHub noreply email address
             github_username = get_github_username_from_email(commit["email"])
-            
-            # If not a noreply email, fetch directly via API using the commit hash
             if not github_username:
                 repo_info = parse_github_repo(repo_url)
                 if repo_info:
                     owner, repo = repo_info
                     github_username = fetch_github_username(owner, repo, commit["hash"])
-            
-            # Store result in cache (even if None, to avoid duplicate API spamming)
+
             AUTHOR_CACHE[git_author] = github_username
-        
+
         if github_username:
             author_display = f"[@{github_username}](https://github.com/{github_username})"
 
-    # Format commit hash link
-    hash_str = commit["hash"]
-    if repo_url:
-        hash_str = f"[{hash_str}]({repo_url}/commit/{hash_str})"
-    
-    # Format Pull Request link if present
-    message = commit["message"]
-    if repo_url:
-        pr_match = re.search(r"\(#(\d+)\)$", message)
-        if pr_match:
-            pr_num = pr_match.group(1)
-            message = message[:pr_match.start()].strip()
-            message = f"{message} ([#{pr_num}]({repo_url}/pull/{pr_num}))"
+    raw_subject = commit["raw_subject"]
+    pr_match = re.search(r"\s*\(#(\d+)\)$", raw_subject)
 
-    scope_str = f"**{commit['scope']}**: " if commit['scope'] else ""
-    return f"- {scope_str}{message} ({hash_str}) by {author_display}"
+    if pr_match:
+        pr_num = pr_match.group(1)
+        clean_subject = raw_subject[:pr_match.start()].strip()
+        if repo_url:
+            ref_str = f"in [#{pr_num}]({repo_url}/pull/{pr_num})"
+        else:
+            ref_str = f"in #{pr_num}"
+    else:
+        clean_subject = raw_subject
+        hash_str = commit["hash"]
+        if repo_url:
+            ref_str = f"in [{hash_str}]({repo_url}/commit/{hash_str})"
+        else:
+            ref_str = f"in {hash_str}"
+
+    return f"- {clean_subject} by {author_display} {ref_str}"
 
 
-def generate_changelog(from_ref: str, to_ref: str, use_emojis: bool) -> str:
-    """Generates structured release notes from a range of commits."""
+def generate_changelog(from_ref: Optional[str], to_ref: str) -> str:
+    """Generates structured release notes from a range of commits or entire history if first release."""
     log_format = "%h|%an|%ae|%s"
-    log_range = f"{from_ref}..{to_ref}"
-    
+    if from_ref:
+        log_range = f"{from_ref}..{to_ref}"
+    else:
+        log_range = to_ref
+
     try:
         log_output = run_git_command(["git", "log", f"--format={log_format}", log_range])
     except RuntimeError as e:
@@ -321,11 +269,10 @@ def generate_changelog(from_ref: str, to_ref: str, use_emojis: bool) -> str:
     commits = [c for c in commits if c is not None]
 
     if not commits:
-        return f"No changes found between `{from_ref}` and `{to_ref}`."
+        return "No changes found."
 
     repo_url = get_remote_url()
-    category_map = CATEGORY_MAPPING_EMOJI if use_emojis else CATEGORY_MAPPING_CLEAN
-    other_cat = "🔄 Other Changes" if use_emojis else "Other Changes"
+    other_cat = "Other Changes"
 
     grouped: Dict[str, List[Dict]] = defaultdict(list)
     breaking_changes: List[Dict] = []
@@ -336,24 +283,24 @@ def generate_changelog(from_ref: str, to_ref: str, use_emojis: bool) -> str:
 
         if commit["breaking"]:
             breaking_changes.append(commit)
-        
-        category = category_map.get(commit["type"], other_cat)
+
+        category = CATEGORY_MAPPING.get(commit["type"], other_cat)
         grouped[category].append(commit)
 
+    today = datetime.date.today().isoformat()
+    version_display = to_ref if to_ref != "HEAD" else "v0.1.0"
+
     output = []
-    output.append(f"# Release Notes ({from_ref} -> {to_ref})")
+    output.append(f"# Release Notes - {version_display} ({today})")
     output.append("")
 
     if breaking_changes:
-        header = "🚨 BREAKING CHANGES" if use_emojis else "BREAKING CHANGES"
-        output.append(f"## {header}")
+        output.append("## BREAKING CHANGES")
         for bc in breaking_changes:
             output.append(format_commit_entry(bc, repo_url))
         output.append("")
 
-    ordered_categories = ORDERED_CATEGORIES_EMOJI if use_emojis else ORDERED_CATEGORIES_CLEAN
-
-    for cat in ordered_categories:
+    for cat in ORDERED_CATEGORIES:
         if cat in grouped and grouped[cat]:
             output.append(f"## {cat}")
             for commit in grouped[cat]:
@@ -365,10 +312,9 @@ def generate_changelog(from_ref: str, to_ref: str, use_emojis: bool) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate structured release notes from Git Diff.")
-    parser.add_argument("--from", "-f", dest="from_ref", help="Start tag, commit, or branch. Auto-detects the latest tag if empty.")
-    parser.add_argument("--to", "-t", dest="to_ref", default="HEAD", help="End tag, commit, or branch (default: HEAD).")
-    parser.add_argument("--output", "-o", default="RELEASE_NOTES.md", help="File path to save release notes (default: RELEASE_NOTES.md).")
-    parser.add_argument("--emoji", action="store_true", help="Add emojis to headings (disabled by default).")
+    parser.add_argument("--from", "-f", dest="from_ref", help="Start ref. Auto-detects latest tag if empty.")
+    parser.add_argument("--to", "-t", dest="to_ref", default="HEAD", help="End ref (default: HEAD).")
+    parser.add_argument("--output", "-o", default="RELEASE_NOTES.md", help="File path to save release notes.")
 
     args = parser.parse_args()
 
@@ -382,27 +328,21 @@ def main():
 
     if not from_ref:
         tags = get_latest_tags()
-        if tags:
-            if to_ref == "HEAD":
-                from_ref = tags[0]
-            else:
-                try:
-                    to_index = tags.index(to_ref)
-                    if to_index + 1 < len(tags):
-                        from_ref = tags[to_index + 1]
-                    else:
-                        from_ref = get_initial_commit()
-                except ValueError:
-                    from_ref = tags[0]
-        else:
-            try:
-                from_ref = get_initial_commit()
-            except Exception:
-                sys.exit("Error: Could not retrieve git repository history.")
+        head_commit = run_git_command(["git", "rev-parse", "HEAD"])
 
-    print(f"Generating changelog from '{from_ref}' to '{to_ref}'...", file=sys.stderr)
-    
-    changelog = generate_changelog(from_ref, to_ref, args.emoji)
+        # Filter out any tag pointing to current HEAD (the tag currently being published)
+        previous_tags = []
+        for tag in tags:
+            tag_commit = run_git_command(["git", "rev-parse", f"{tag}^{{commit}}"])
+            if tag_commit != head_commit:
+                previous_tags.append(tag)
+
+        if previous_tags:
+            from_ref = previous_tags[0]
+        else:
+            from_ref = None
+
+    changelog = generate_changelog(from_ref, to_ref)
 
     if args.output:
         try:

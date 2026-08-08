@@ -24,20 +24,42 @@ def run_cmd(cmd: list[str], check: bool = True) -> str:
 
 
 def generate_recent_commit_summary(version: str) -> str:
-    """Extracts commits since the previous tag or initial commit."""
+    """Extracts commits since the previous tag or entire history if first release."""
     tags = run_cmd(["git", "tag", "--sort=-creatordate"], check=False).splitlines()
-    prev_ref = tags[0] if tags else run_cmd(["git", "rev-list", "--max-parents=0", "HEAD"])
 
-    log_output = run_cmd(["git", "log", f"{prev_ref}..HEAD", "--oneline"], check=False)
+    head_commit = run_cmd(["git", "rev-parse", "HEAD"], check=False)
+    previous_tags = []
+    for tag in tags:
+        tag_commit = run_cmd(["git", "rev-parse", f"{tag}^{{commit}}"], check=False)
+        if tag_commit and tag_commit != head_commit:
+            previous_tags.append(tag)
+
+    if previous_tags:
+        log_range = f"{previous_tags[0]}..HEAD"
+    else:
+        log_range = "HEAD"
+
+    log_output = run_cmd(["git", "log", log_range, "--format=%h|%an|%s"], check=False)
     if not log_output:
         return "- Maintenance and internal updates."
 
     lines = []
     for line in log_output.splitlines():
-        # Strip commit hash
-        parts = line.strip().split(" ", 1)
-        if len(parts) == 2:
-            lines.append(f"- {parts[1]}")
+        parts = line.strip().split("|", 2)
+        if len(parts) == 3:
+            commit_hash, author, subject = parts
+
+            pr_match = re.search(r"\s*\(#(\d+)\)$", subject)
+            if pr_match:
+                pr_num = pr_match.group(1)
+                clean_subject = subject[:pr_match.start()].strip()
+                ref_str = f"in #{pr_num}"
+            else:
+                clean_subject = subject
+                ref_str = f"in {commit_hash}"
+
+            lines.append(f"- {clean_subject} by @{author} {ref_str}")
+
     return "\n".join(lines)
 
 
