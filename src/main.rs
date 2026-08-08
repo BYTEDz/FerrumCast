@@ -18,13 +18,7 @@ use std::sync::Arc;
 #[cfg(target_os = "windows")]
 unsafe extern "system" {
     fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
-    fn SetDefaultDllDirectories(DirectoryFlags: u32) -> i32;
 }
-
-#[cfg(target_os = "windows")]
-const LOAD_LIBRARY_SEARCH_APPLICATION_DIR: u32 = 0x00000200;
-#[cfg(target_os = "windows")]
-const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x00000800;
 
 #[cfg(target_os = "linux")]
 fn get_token_file_path() -> std::path::PathBuf {
@@ -49,40 +43,72 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // --- Windows: Pin DLL resolution to the binary's own directory FIRST ---
+    // Must happen before ANY GStreamer call (including --probe) so the bundled
+    // DLLs are found instead of whatever happens to be on the system PATH.
+    #[cfg(target_os = "windows")]
+    {
+        unsafe {
+            // DPI awareness
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
+        }
+
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                use std::os::windows::ffi::OsStrExt;
+
+                // 1. Tell Windows loader to prefer the exe's own folder.
+                //    We do NOT call SetDefaultDllDirectories here because that
+                //    replaces the normal search order; just calling SetDllDirectoryW
+                //    inserts exe_dir as the *first* candidate while leaving
+                //    system32 and the rest intact.
+                unsafe {
+                    let wide: Vec<u16> = exe_dir
+                        .as_os_str()
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    SetDllDirectoryW(wide.as_ptr());
+                }
+
+                // 2. Prepend exe_dir to PATH so every child process (gst-plugin-scanner)
+                //    also resolves from there first.
+                let current_path = std::env::var("PATH").unwrap_or_default();
+                let new_path = format!("{};{}", exe_dir.display(), current_path);
+                unsafe {
+                    std::env::set_var("PATH", &new_path);
+                }
+
+                // 3. GStreamer: restrict plugin scan to exe_dir only.
+                //    Clearing GST_PLUGIN_SYSTEM_PATH prevents it from scanning
+                //    any system-wide registry locations.
+                unsafe {
+                    std::env::set_var("GST_PLUGIN_PATH", exe_dir);
+                    std::env::set_var("GST_PLUGIN_SYSTEM_PATH", "");
+                    std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", "");
+
+                    // 4. Per-version registry cache so different installs don't collide.
+                    let cache_path = exe_dir.join("gst-registry.bin");
+                    std::env::set_var("GST_REGISTRY", &cache_path);
+                    std::env::set_var("GST_REGISTRY_1_0", &cache_path);
+                }
+
+                // 5. Point GStreamer's plugin scanner to the bundled copy if present.
+                let local_scanner = exe_dir.join("gst-plugin-scanner.exe");
+                if local_scanner.exists() {
+                    unsafe {
+                        std::env::set_var("GST_PLUGIN_SCANNER", &local_scanner);
+                    }
+                }
+            }
+        }
+    }
+
     if args.iter().any(|arg| arg == "--probe") {
         gstreamer::init().expect("Failed to initialize gstreamer");
         let caps = pipeline::PipelineBuilder::probe_capabilities();
         println!("{}", serde_json::to_string(&caps).unwrap());
         return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    unsafe {
-        let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
-
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                use std::os::windows::ffi::OsStrExt;
-                let wide: Vec<u16> = exe_dir
-                    .as_os_str()
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-
-                SetDefaultDllDirectories(
-                    LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
-                );
-                SetDllDirectoryW(wide.as_ptr());
-
-                std::env::set_var("GST_PLUGIN_PATH", exe_dir);
-                std::env::set_var("GST_PLUGIN_SYSTEM_PATH", "");
-
-                let local_scanner = exe_dir.join("gst-plugin-scanner.exe");
-                if local_scanner.exists() {
-                    std::env::set_var("GST_PLUGIN_SCANNER", &local_scanner);
-                }
-            }
-        }
     }
 
     unsafe {
