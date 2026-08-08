@@ -4,6 +4,65 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.0] - 2026-08-08
 
+- ci: update release workflow by **Azhar Zouhir** in 8d90e80
+- chore(release): v0.1.0 by **Azhar Zouhir** in 1b6f413
+- refactor: update author formatting and remove unused release note generator script by **Azhar Zouhir** in 81d8096
+- chore(release): v0.1.0 by **Azhar Zouhir** in d1759b6
+- refactor: simplify release notes generator by removing emoji support and improving formatting logic by **Azhar Zouhir** in e1bf246
+- chore(release): v0.1.0 by **Azhar Zouhir** in 633f407
+- feat: add automated release script to handle version bumping and changelog generation by **Azhar Zouhir** in 3fc4162
+- refactor: sync Cargo.toml versions with release tags and migrate to custom Python-based release note generation by **Azhar Zouhir** in 07d3f40
+- feat: implement CLI version flag and update dynamic build versioning logic by **Azhar Zouhir** in 22bd6b3
+- feat: implement automatic portal token refresh by retrying with a fresh prompt if the saved token is stale by **Azhar Zouhir** in eabb52f
+- refactor: reorder automatic hardware encoder selection priority and group by codec support by **Azhar Zouhir** in a9a637b
+- fix: update regex in DLL dependency finder to correctly capture versioned filenames by **Azhar Zouhir** in 6d3cfd5
+- feat: enhance Windows DLL loading by enforcing strict isolation and setting plugin paths by **Azhar Zouhir** in feb1f3d
+- chore: update license from AGPL-3.0 to PolyForm Noncommercial License 1.0.0 and update README accordingly by **Azhar Zouhir** in 7257dde
+- chore: optimize CI build pipeline, update GStreamer installation, and add H.265 support for multiple hardware encoders by **Azhar Zouhir** in cc0373e
+- refactor: flatten GStreamer deployment layout on Windows to improve plugin discovery and dependency resolution by **Azhar Zouhir** in 2547c5c
+- feat: verify GStreamer encoder state initialization and redirect tracing output to stderr by **Azhar Zouhir** in b56d284
+- feat: replace broadcast-based udpsink with configurable multiudpsink for client support by **Azhar Zouhir** in 7d7a9d2
+- feat: upgrade audio pipeline to multicast broadcast and refine video pipeline resolution and framerate handling by **Azhar Zouhir** in ed3d2c5
+- feat: add audio_bitrate configuration, improve CLI flag parsing, and bypass XDG portal for audio-only streams by **Azhar Zouhir** in 1b1ab45
+- feat: add audio-only streaming mode to configuration and pipeline execution by **Azhar Zouhir** in 7dd171b
+- refactor: simplify Windows plugin path handling and improve environment variable setup by **Azhar Zouhir** in c84fadd
+- refactor: improve Windows executable path handling and simplify videorate configuration by **Azhar Zouhir** in 80eb02b
+- refactor: enhance GStreamer distribution process with improved plugin handling and dependency resolution by **Azhar Zouhir** in b2941ca
+- refactor: enhance GStreamer plugin directory handling and improve environment variable setup by **Azhar Zouhir** in 2491d0a
+- feat: add monitor switching functionality and enhance video source handling by **Azhar Zouhir** in 1c32ca9
+- refactor: update Linux token file path handling and clean up portal input management by **Azhar Zouhir** in 84a8dba
+- refactor: enhance IPC message handling and improve Windows mouse input logging by **Azhar Zouhir** in d367693
+- refactor: improve mouse input handling on Windows and add error logging for SendInput failures by **Azhar Zouhir** in f020108
+- refactor: compact OutboundMessage enum definitions and handle broadcast lag in IPC write loop by **Azhar Zouhir** in 2eafb6f
+- fix: constrain portal capture to Linux and update Windows mouse input event constants by **Azhar Zouhir** in a5a3db1
+- chore: add Win32_UI_Input_KeyboardAndMouse feature to windows dependency by **Azhar Zouhir** in aae0df5
+- refactor: improve portal mouse input handling, add Windows sub-pixel movement accumulation, and apply code formatting by **Azhar Zouhir** in e0c8b68
+- feat: add Linux XDG RemoteDesktop portal support for mouse input handling by **Azhar Zouhir** in 12d952d
+- feat: enhance build workflow to support versioned artifact naming and improve artifact upload process by **Azhar Zouhir** in 2214ab2
+- feat: implement dynamic versioning and enhance release workflow with changelog configuration by **Azhar Zouhir** in 77333d1
+- refactor: optimize D3D11 pipeline by integrating GPU-accelerated scaling and color conversion into the capture stage by **Azhar Zouhir** in a0d7737
+- refactor: remove ResolvedEncoder and consolidate encoder logic into a new encoders module by **Azhar Zouhir** in 9cf173b
+- feat: enhance video source configuration and add outbound message handling in StreamManager by **Azhar Zouhir** in 7abadad
+- docs: Enhance README with project structure and SRTP details by **Azhar Zouhir** in a8798f2
+- chore: Update Rust dependencies in Cargo.lock by **Azhar Zouhir** in 0e99b02
+- refactor: remove WebRTC support, consolidate pipeline logic into a new stream module, and enable zero-copy DMA-BUF streaming on Linux by **Azhar Zouhir** in 89ac52d
+- Revert to working state at fdeecb3c by **Azhar Zouhir** in cf5529f
+- deps: Update Rust dependencies by **Azhar Zouhir** in 2996c56
+- feat: add SRTP encryption support for RTP output streams via optional master key configuration by **Azhar Zouhir** in fdeecb3
+- feat: add ICE connection state monitoring to automatically stop pipeline on client disconnect by **Azhar Zouhir** in 1b9abcd
+- fix(windows): enable process-level DPI awareness on startup by **Azhar Zouhir** in 57e0d30
+- chore: update windows runner to 2025 and bump action versions to support windows platform flexibility by **Azhar Zouhir** in fd997d6
+- refactor: remove legacy bash build and environment utility scripts by **Azhar Zouhir** in 99321d8
+- ci: add aarch64-unknown-linux-gnu build target and update workflow logic for Ubuntu runners by **Azhar Zouhir** in 60132e8
+- fix: rename ximagesrc property from show-cursor to show-pointer by **Azhar Zouhir** in cd242e7
+- refactor: update checkout ref logic to handle repository-agnostic builds by **Azhar Zouhir** in e0b12c9
+- refactor: optimize build workflow by configuring repository checkout and streamlining script execution by **Azhar Zouhir** in bd080b5
+- ci: rename workflow and add support for workflow_call with artifact outputs by **Azhar Zouhir** in 8711fae
+- feat: add Contributor License Agreement (CLA) to repository root by **Azhar Zouhir** in 45dbbd4
+- Initial release: Core Rust screen capture and streaming engine by **Azhar Zouhir** in 8abfde8
+
+## [0.1.0] - 2026-08-08
+
 - refactor: update author formatting and remove unused release note generator script by **Azhar Zouhir** in 81d8096
 - chore(release): v0.1.0 by **Azhar Zouhir** in d1759b6
 - refactor: simplify release notes generator by removing emoji support and improving formatting logic by **Azhar Zouhir** in e1bf246
