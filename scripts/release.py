@@ -28,18 +28,29 @@ def generate_recent_commit_summary(version: str) -> str:
     tags = run_cmd(["git", "tag", "--sort=-creatordate"], check=False).splitlines()
 
     head_commit = run_cmd(["git", "rev-parse", "HEAD"], check=False)
+    current_tag = f"v{version.lstrip('v')}"
+
     previous_tags = []
     for tag in tags:
+        if tag == current_tag:
+            continue
         tag_commit = run_cmd(["git", "rev-parse", f"{tag}^{{commit}}"], check=False)
         if tag_commit and tag_commit != head_commit:
             previous_tags.append(tag)
 
     if previous_tags:
         log_range = f"{previous_tags[0]}..HEAD"
+    elif tags:
+        # If current HEAD has the only existing tag (e.g. v0.1.0)
+        log_range = tags[0] if tags[0] != current_tag else "HEAD"
     else:
         log_range = "HEAD"
 
     log_output = run_cmd(["git", "log", log_range, "--format=%h|%an|%s"], check=False)
+    if not log_output and previous_tags:
+        # Fallback to tag diff or HEAD log if range yielded nothing
+        log_output = run_cmd(["git", "log", "--format=%h|%an|%s"], check=False)
+
     if not log_output:
         return "- Maintenance and internal updates."
 
@@ -49,7 +60,9 @@ def generate_recent_commit_summary(version: str) -> str:
         if len(parts) == 3:
             commit_hash, author, subject = parts
 
-            author_str = f"**{author}**" if " " in author else f"@{author}"
+            # Sanitize handle formatting: remove spaces and clean handle
+            handle = "".join(author.split())
+            author_str = f"@{handle}"
 
             pr_match = re.search(r"\s*\(#(\d+)\)$", subject)
             if pr_match:
