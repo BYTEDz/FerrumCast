@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-08-08
+
+- refactor: harden Windows DLL resolution and GStreamer plugin discovery by prioritizing local paths and isolating registries by @AzharZouhir in baede51
+
 ## [0.1.0] - 2026-08-08
 
 - refactor: consolidate changelog entries and remove redundant release generator script by @AzharZouhir in 395df37
