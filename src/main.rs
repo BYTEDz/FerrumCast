@@ -39,10 +39,15 @@ fn get_token_file_path() -> std::path::PathBuf {
     }
 }
 
-const VERSION: &str = env!("FERRUMCAST_VERSION");
+const VERSION: &str = env!("FERRUMCAST_BUILD_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
+        println!("ferrumcast {}", VERSION);
+        return Ok(());
+    }
     #[cfg(target_os = "windows")]
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();

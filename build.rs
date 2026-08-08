@@ -1,32 +1,23 @@
+// build.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
+    let git_tag = Command::new("git")
+        .args(["describe", "--tags", "--always", "--dirty"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
-    let version = if let Ok(ref_name) = std::env::var("GITHUB_REF_NAME") {
-        let v = ref_name.trim();
-        if v.starts_with('v') {
-            v[1..].to_string()
-        } else {
-            v.to_string()
-        }
+    let version = if git_tag.is_empty() {
+        env!("CARGO_PKG_VERSION").to_string()
     } else {
-        Command::new("git")
-            .args(["describe", "--tags", "--always", "--dirty"])
-            .output()
-            .ok()
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|s| {
-                let v = s.trim();
-                if v.starts_with('v') {
-                    v[1..].to_string()
-                } else {
-                    v.to_string()
-                }
-            })
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+        git_tag
     };
 
-    println!("cargo:rustc-env=FERRUMCAST_VERSION={}", version);
+    println!("cargo:rustc-env=FERRUMCAST_BUILD_VERSION={}", version);
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs");
 }
