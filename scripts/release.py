@@ -128,7 +128,7 @@ def main():
     run_cmd(["cargo", "check", "--quiet"])
 
     print(f"--> Committing release {tag}...")
-    run_cmd(["git", "add", "Cargo.toml", "CHANGELOG.md"])
+    run_cmd(["git", "add", "-A"])
     run_cmd(["git", "commit", "-m", f"chore(release): {tag}"])
 
     print(f"--> Creating annotated tag {tag}...")
