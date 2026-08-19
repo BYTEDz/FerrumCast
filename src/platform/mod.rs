@@ -34,6 +34,7 @@ pub struct VideoSourceDescriptor {
 }
 
 pub trait PlatformBackend: Send + Sync {
+    #[allow(dead_code)]
     fn detect_display_server(&self) -> DisplayServer;
     fn build_video_source(
         &self,

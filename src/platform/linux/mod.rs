@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
 
+pub mod display;
 pub mod portal;
 
 use anyhow::Result;
 use gstreamer as gst;
-use std::env;
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 use tracing::{error, info};
@@ -16,8 +16,10 @@ use crate::input::MouseInput;
 use crate::ipc::OutboundMessage;
 use crate::loc;
 use crate::platform::{DisplayServer, PlatformBackend, VideoSourceDescriptor};
+use display::LinuxDisplayEnvironment;
 
 pub struct LinuxBackend {
+    display_env: LinuxDisplayEnvironment,
     pub portal_capture: Option<Arc<portal::PortalCapture>>,
 }
 
@@ -27,21 +29,26 @@ impl LinuxBackend {
         outbound_tx: Sender<OutboundMessage>,
         audio_only: bool,
     ) -> Result<Self> {
-        let is_wayland = env::var("WAYLAND_DISPLAY").is_ok()
-            || env::var("XDG_SESSION_TYPE")
-                .map(|v| v.to_lowercase() == "wayland")
-                .unwrap_or(false);
+        let display_env = LinuxDisplayEnvironment::probe();
 
-        let portal_capture = if is_wayland && !audio_only {
+        let portal_capture = if display_env == LinuxDisplayEnvironment::Wayland && !audio_only {
             let token_path = Self::resolve_token_file_path();
+            let effective_token = initial_token.or_else(|| {
+                std::fs::read_to_string(&token_path)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+
+            let had_token = effective_token.is_some();
             let capture_result =
-                portal::request_screencast(initial_token.clone(), Some(outbound_tx.clone())).await;
+                portal::request_screencast(effective_token, Some(outbound_tx.clone())).await;
 
             let capture_result = match capture_result {
                 Ok(c) => Ok(c),
-                Err(ref e) if initial_token.is_some() => {
+                Err(ref e) if had_token => {
                     error!(
-                        "{}: {}. Purging cached token.",
+                        "{}: {}. Purging cached token and requesting fresh permission.",
                         loc::MSG_SAVED_TOKEN_INVALID,
                         e
                     );
@@ -58,7 +65,7 @@ impl LinuxBackend {
                         if let Some(parent) = token_path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        let _ = std::fs::write(&token_path, t);
+                        let _ = std::fs::write(&token_path, t.trim());
                     }
                     Some(Arc::new(c))
                 }
@@ -72,13 +79,16 @@ impl LinuxBackend {
         };
 
         info!("{}", loc::MSG_BACKEND_INITIALIZED);
-        Ok(Self { portal_capture })
+        Ok(Self {
+            display_env,
+            portal_capture,
+        })
     }
 
     pub fn resolve_token_file_path() -> std::path::PathBuf {
-        if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
             std::path::PathBuf::from(config_home).join("ferrumcast.token")
-        } else if let Ok(home) = env::var("HOME") {
+        } else if let Ok(home) = std::env::var("HOME") {
             std::path::PathBuf::from(home)
                 .join(".config")
                 .join("ferrumcast.token")
@@ -90,17 +100,7 @@ impl LinuxBackend {
 
 impl PlatformBackend for LinuxBackend {
     fn detect_display_server(&self) -> DisplayServer {
-        if env::var("WAYLAND_DISPLAY").is_ok()
-            || env::var("XDG_SESSION_TYPE")
-                .map(|v| v.to_lowercase() == "wayland")
-                .unwrap_or(false)
-        {
-            DisplayServer::Wayland
-        } else if env::var("DISPLAY").is_ok() {
-            DisplayServer::X11
-        } else {
-            DisplayServer::Unknown
-        }
+        self.display_env.to_display_server()
     }
 
     fn build_video_source(
@@ -138,7 +138,7 @@ impl PlatformBackend for LinuxBackend {
                 "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
                 portal.fd, portal.node_id
             )
-        } else if self.detect_display_server() == DisplayServer::Wayland {
+        } else if self.display_env == LinuxDisplayEnvironment::Wayland {
             "videotestsrc is-live=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream"
                 .to_string()
         } else {
