@@ -40,7 +40,7 @@ fn default_nvenc_tune() -> String {
     "ultra-low-latency".to_string()
 }
 fn default_vaapi_target_usage() -> u32 {
-    7 // 7 = Ultra-Fast / Real-time Low Latency (1 is Slowest/Quality)
+    4 // Balanced target usage preserves CABAC hardware encoding
 }
 fn default_qsv_target_usage() -> u32 {
     7
@@ -70,7 +70,7 @@ fn default_queue_max_buffers() -> u32 {
     3
 }
 fn default_aggregate_mode() -> String {
-    "zero-latency".to_string()
+    "none".to_string()
 }
 fn default_udp_buffer_size() -> u32 {
     2_097_152

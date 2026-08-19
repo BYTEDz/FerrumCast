@@ -7,7 +7,7 @@ use gst::prelude::*;
 use gstreamer as gst;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 use tracing::info;
 
@@ -50,19 +50,36 @@ impl StreamManager {
             profiler_handle: Mutex::new(None),
         };
 
-        manager.attach_pad_probes(&manager.pipeline.lock());
+        manager.attach_detailed_probes(&manager.pipeline.lock());
         manager.spawn_bus_listener(&manager.pipeline.lock());
 
         Ok(manager)
     }
 
-    fn attach_pad_probes(&self, pipeline: &gst::Pipeline) {
-        let capture_count = Arc::new(AtomicU32::new(0));
+    fn attach_detailed_probes(&self, pipeline: &gst::Pipeline) {
+        let cap_count = Arc::new(AtomicU32::new(0));
         let enc_in_count = Arc::new(AtomicU32::new(0));
         let enc_out_count = Arc::new(AtomicU32::new(0));
+        let idr_count = Arc::new(AtomicU32::new(0));
+        let p_count = Arc::new(AtomicU32::new(0));
+        let bytes_sent = Arc::new(AtomicU64::new(0));
 
+        // 1. Probe Screen Capture Source Output
+        if let Some(src) = pipeline
+            .by_name("pipewiresrc0")
+            .or_else(|| pipeline.by_name("gdi_src"))
+        {
+            if let Some(src_pad) = src.src_pads().first() {
+                let count = cap_count.clone();
+                src_pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    gst::PadProbeReturn::Ok
+                });
+            }
+        }
+
+        // 2. Probe Video Encoder Input & Output
         if let Some(enc) = pipeline.by_name("video_encoder") {
-            // Encoder Sink Pad (Input)
             if let Some(sink_pad) = enc.sink_pads().first() {
                 let count = enc_in_count.clone();
                 sink_pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
@@ -71,19 +88,33 @@ impl StreamManager {
                 });
             }
 
-            // Encoder Src Pad (Output)
             if let Some(src_pad) = enc.src_pads().first() {
                 let count = enc_out_count.clone();
-                src_pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                let idrs = idr_count.clone();
+                let ps = p_count.clone();
+                let bytes = bytes_sent.clone();
+
+                src_pad.add_probe(gst::PadProbeType::BUFFER, move |_, probe_info| {
                     count.fetch_add(1, Ordering::Relaxed);
+                    if let Some(gst::PadProbeData::Buffer(ref buffer)) = probe_info.data {
+                        bytes.fetch_add(buffer.size() as u64, Ordering::Relaxed);
+                        if !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT) {
+                            idrs.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            ps.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                     gst::PadProbeReturn::Ok
                 });
             }
         }
 
-        let cap_c = capture_count;
-        let in_c = enc_in_count;
-        let out_c = enc_out_count;
+        let c_cap = cap_count;
+        let c_in = enc_in_count;
+        let c_out = enc_out_count;
+        let c_idr = idr_count;
+        let c_p = p_count;
+        let c_bytes = bytes_sent;
 
         let handle = std::thread::spawn(move || {
             let mut last_check = Instant::now();
@@ -92,12 +123,17 @@ impl StreamManager {
                 let elapsed = last_check.elapsed().as_secs_f64();
                 last_check = Instant::now();
 
-                let in_fps = (in_c.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
-                let out_fps = (out_c.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let cap_fps = (c_cap.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let in_fps = (c_in.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let out_fps = (c_out.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let idr_fps = (c_idr.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let p_fps = (c_p.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let mbps =
+                    (c_bytes.swap(0, Ordering::Relaxed) as f64 * 8.0) / (1_000_000.0 * elapsed);
 
                 info!(
-                    "[STREAM PROFILER] Encoder Ingest: {} FPS | Encoder Output: {} FPS",
-                    in_fps, out_fps
+                    "[STREAM TELEMETRY] Capture: {} FPS | EncIn: {} FPS | EncOut: {} FPS (IDR: {}, P: {}) | TX: {:.2} Mbps",
+                    cap_fps, in_fps, out_fps, idr_fps, p_fps, mbps
                 );
             }
         });
@@ -185,7 +221,7 @@ impl StreamManager {
         new_pipeline.set_state(gst::State::Playing)?;
         *pipeline = new_pipeline;
 
-        self.attach_pad_probes(&pipeline);
+        self.attach_detailed_probes(&pipeline);
         self.spawn_bus_listener(&pipeline);
 
         info!("{}", loc::MSG_PIPELINE_RESTARTED);

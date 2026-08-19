@@ -85,20 +85,18 @@ impl VideoEncoder for X265Encoder {
 
         if is_cqp {
             format!(
-                "speed-preset={preset} tune={tune} key-int-max={key_int} \
-                option-string=qp={cqp}:bframes=0",
+                "speed-preset={preset} tune=zerolatency key-int-max={key_int} \
+                option-string=qp={cqp}:bframes=0:repeat-headers=1",
                 preset = cfg.speed_preset,
-                tune = cfg.tune,
                 key_int = key_int,
                 cqp = cfg.cqp_value,
             )
         } else {
             format!(
-                "bitrate={bitrate} speed-preset={preset} tune={tune} key-int-max={key_int} \
-                option-string=bframes=0",
+                "bitrate={bitrate} speed-preset={preset} tune=zerolatency key-int-max={key_int} \
+                option-string=bframes=0:repeat-headers=1",
                 bitrate = bitrate,
                 preset = cfg.speed_preset,
-                tune = cfg.tune,
                 key_int = key_int,
             )
         }
@@ -123,24 +121,21 @@ impl VideoEncoder for VaH264Encoder {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
         let is_cqp = cfg.rc_mode == "cqp";
-        let target_usage = cfg.vaapi_target_usage;
 
         if is_cqp {
             format!(
                 "rate-control=cqp qp-i={cqp} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0",
+                target-usage=7 aud=false ref-frames=1 b-frames=0",
                 cqp = cfg.cqp_value,
                 key_int = key_int,
-                tu = target_usage,
             )
         } else {
             format!(
                 "bitrate={bitrate} rate-control={rc} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0",
+                target-usage=7 aud=false ref-frames=1 b-frames=0",
                 bitrate = bitrate,
                 rc = cfg.rc_mode,
                 key_int = key_int,
-                tu = target_usage,
             )
         }
     }
@@ -169,7 +164,7 @@ impl VideoEncoder for VaH265Encoder {
         if is_cqp {
             format!(
                 "rate-control=cqp qp-i={cqp} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0",
+                target-usage={tu} aud=false ref-frames=1 b-frames=0",
                 cqp = cfg.cqp_value,
                 key_int = key_int,
                 tu = target_usage,
@@ -177,7 +172,7 @@ impl VideoEncoder for VaH265Encoder {
         } else {
             format!(
                 "bitrate={bitrate} rate-control={rc} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0",
+                target-usage={tu} aud=false ref-frames=1 b-frames=0",
                 bitrate = bitrate,
                 rc = cfg.rc_mode,
                 key_int = key_int,
@@ -474,42 +469,38 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
         EncoderChoice::X265 if has("x265") => Box::new(X265Encoder),
         EncoderChoice::X264 => Box::new(X264Encoder),
         EncoderChoice::Auto => {
-            if has("nvenc") {
-                return Box::new(NvencEncoder);
-            }
             if has("nvenc_h265") {
                 return Box::new(NvencH265Encoder);
             }
-            if has("intel_qsv") {
-                return Box::new(QsvEncoder);
+            if has("nvenc") {
+                return Box::new(NvencEncoder);
+            }
+            if has("vah265") {
+                return Box::new(VaH265Encoder);
+            }
+            if has("vah264") {
+                return Box::new(VaH264Encoder);
             }
             if has("intel_qsv_h265") {
                 return Box::new(QsvH265Encoder);
             }
-            if has("amd_amf") {
-                return Box::new(AmfEncoder);
+            if has("intel_qsv") {
+                return Box::new(QsvEncoder);
             }
             if has("amd_amf_h265") {
                 return Box::new(AmfH265Encoder);
             }
-
-            #[cfg(target_os = "linux")]
-            {
-                if has("vah264") {
-                    return Box::new(VaH264Encoder);
-                }
-                if has("vah265") {
-                    return Box::new(VaH265Encoder);
-                }
+            if has("amd_amf") {
+                return Box::new(AmfEncoder);
             }
 
             #[cfg(target_os = "windows")]
             {
-                if has("windows_mf") {
-                    return Box::new(MfEncoder);
-                }
                 if has("windows_mf_h265") {
                     return Box::new(MfH265Encoder);
+                }
+                if has("windows_mf") {
+                    return Box::new(MfEncoder);
                 }
             }
 
@@ -532,6 +523,12 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
             if has("nvenc") {
                 return Box::new(NvencEncoder);
             }
+            if has("vah265") {
+                return Box::new(VaH265Encoder);
+            }
+            if has("vah264") {
+                return Box::new(VaH264Encoder);
+            }
             if has("intel_qsv_h265") {
                 return Box::new(QsvH265Encoder);
             }
@@ -545,21 +542,11 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
                 return Box::new(AmfEncoder);
             }
 
-            #[cfg(target_os = "linux")]
-            {
-                if has("vah265") {
-                    return Box::new(VaH265Encoder);
-                }
-                if has("vah264") {
-                    return Box::new(VaH264Encoder);
-                }
-            }
-
-            if has("x265") {
-                return Box::new(X265Encoder);
-            }
             if has("x264") {
                 return Box::new(X264Encoder);
+            }
+            if has("x265") {
+                return Box::new(X265Encoder);
             }
 
             #[cfg(target_os = "windows")]

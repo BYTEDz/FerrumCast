@@ -15,9 +15,20 @@ pub fn scale_caps(
 
     let has_target_res = cfg.width.map_or(false, |w| w > 0) || cfg.height.map_or(false, |h| h > 0);
 
-    // Apply videoscale when a specific target resolution is requested
+    // If target width/height are specified, insert videoscale so the source resolution is scaled
     if has_target_res && mem_feature.is_none() {
         pre_elements.push_str("videoscale ! ");
+    }
+
+    // videorate generates constant 60 FPS pacing from Wayland damage updates
+    if cfg.framerate.map_or(false, |f| f > 0) && mem_feature.is_none() {
+        pre_elements.push_str("videorate ! ");
+    }
+
+    if let Some(fps) = cfg.framerate {
+        if fps > 0 {
+            parts.push(format!("framerate={}/1", fps));
+        }
     }
 
     if let Some(w) = cfg.width {

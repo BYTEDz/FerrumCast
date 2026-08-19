@@ -100,7 +100,7 @@ impl PipelineBuilder {
                 video/x-h265 ! h265parse config-interval=-1 disable-passthrough=true ! \
                 video/x-h265,stream-format=byte-stream,alignment=au ! \
                 queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
-                rtph265pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
+                rtph265pay mtu={mtu} config-interval=1 pt=96 aggregate-mode=none",
                 video_src = video_desc.pipeline_fragment,
                 converter = video_desc.preferred_converter,
                 caps = caps,
@@ -109,15 +109,14 @@ impl PipelineBuilder {
                 qbufs = qbufs,
                 qtime = qtime,
                 mtu = cfg.rtp_mtu,
-                agg = cfg.aggregate_mode,
             )
         } else {
             format!(
                 "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
-                video/x-h264,profile=constrained-baseline ! h264parse config-interval=-1 disable-passthrough=true ! \
+                video/x-h264 ! h264parse config-interval=-1 disable-passthrough=true ! \
                 video/x-h264,stream-format=byte-stream,alignment=au ! \
                 queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
-                rtph264pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
+                rtph264pay mtu={mtu} config-interval=1 pt=96 aggregate-mode=none",
                 video_src = video_desc.pipeline_fragment,
                 converter = video_desc.preferred_converter,
                 caps = caps,
@@ -126,7 +125,6 @@ impl PipelineBuilder {
                 qbufs = qbufs,
                 qtime = qtime,
                 mtu = cfg.rtp_mtu,
-                agg = cfg.aggregate_mode,
             )
         };
 
