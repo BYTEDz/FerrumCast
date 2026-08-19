@@ -9,16 +9,20 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::loc;
 
-pub fn start_gdi_capture(appsrc: gst_app::AppSrc) -> Arc<AtomicBool> {
+pub fn start_gdi_capture(appsrc: gst_app::AppSrc, target_fps: u32) -> Arc<AtomicBool> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
+
+    let fps = if target_fps > 0 { target_fps } else { 60 };
+    let frame_duration_ns = 1_000_000_000u64 / (fps as u64);
+    let frame_duration = Duration::from_nanos(frame_duration_ns);
 
     thread::spawn(move || unsafe {
         let h_dc_src = GetDC(HWND(0));
@@ -31,10 +35,11 @@ pub fn start_gdi_capture(appsrc: gst_app::AppSrc) -> Arc<AtomicBool> {
         let scr_height = GetSystemMetrics(SM_CYSCREEN);
 
         tracing::info!(
-            "{}: {}x{}",
+            "{}: {}x{} @ {}fps",
             loc::MSG_GDI_CAPTURE_ACTIVE,
             scr_width,
-            scr_height
+            scr_height,
+            fps
         );
 
         let h_dc_mem = CreateCompatibleDC(h_dc_src);
@@ -53,19 +58,20 @@ pub fn start_gdi_capture(appsrc: gst_app::AppSrc) -> Arc<AtomicBool> {
         let buffer_size = row_size * (scr_height as usize);
         let mut buffer = vec![0u8; buffer_size];
 
-        let mut pts = 0;
-        let duration = 33_333_333;
+        let mut pts = 0u64;
 
         appsrc.set_caps(Some(
             &gst::Caps::builder("video/x-raw")
                 .field("format", "BGRA")
                 .field("width", scr_width)
                 .field("height", scr_height)
-                .field("framerate", gst::Fraction::new(30, 1))
+                .field("framerate", gst::Fraction::new(fps as i32, 1))
                 .build(),
         ));
 
         while r.load(Ordering::SeqCst) {
+            let start_time = Instant::now();
+
             if BitBlt(
                 h_dc_mem, 0, 0, scr_width, scr_height, h_dc_src, 0, 0, SRCCOPY,
             )
@@ -131,14 +137,17 @@ pub fn start_gdi_capture(appsrc: gst_app::AppSrc) -> Arc<AtomicBool> {
             out_buf
                 .get_mut()
                 .unwrap()
-                .set_duration(gst::ClockTime::from_nseconds(duration));
-            pts += duration;
+                .set_duration(gst::ClockTime::from_nseconds(frame_duration_ns));
+            pts += frame_duration_ns;
 
             if appsrc.push_buffer(out_buf).is_err() {
                 break;
             }
 
-            thread::sleep(Duration::from_millis(33));
+            let elapsed = start_time.elapsed();
+            if elapsed < frame_duration {
+                thread::sleep(frame_duration - elapsed);
+            }
         }
 
         DeleteObject(h_bmp);

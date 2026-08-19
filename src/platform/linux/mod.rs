@@ -128,7 +128,7 @@ impl PlatformBackend for LinuxBackend {
         let preferred_converter = if is_vaapi {
             "vapostproc".to_string()
         } else if is_nvenc {
-            "glcolorconvert".to_string()
+            "glupload ! glcolorconvert".to_string()
         } else {
             "videoconvert n-threads=0".to_string()
         };

@@ -94,7 +94,7 @@ impl PlatformBackend for WindowsBackend {
     fn post_pipeline_start(&self, pipeline: &gst::Pipeline) -> Result<()> {
         if let Some(src) = pipeline.by_name("gdi_src") {
             let appsrc = src.downcast::<gst_app::AppSrc>().unwrap();
-            *self.gdi_capture_handle.lock() = Some(gdi_capture::start_gdi_capture(appsrc));
+            *self.gdi_capture_handle.lock() = Some(gdi_capture::start_gdi_capture(appsrc, 60));
         }
         Ok(())
     }

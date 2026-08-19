@@ -1,3 +1,7 @@
+// src/pipeline/generic.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use crate::config::StreamConfig;
 
 pub fn scale_caps(
@@ -11,14 +15,15 @@ pub fn scale_caps(
 
     let has_target_res = cfg.width.map_or(false, |w| w > 0) || cfg.height.map_or(false, |h| h > 0);
 
-    // Insert videoscale element whenever a target resolution is set (both HW and SW pipelines)
-    if has_target_res {
-        pre_elements.push_str("videoscale ! ");
-    }
-
-    // Fixed: Removed invalid max-rate=0 property from videorate
-    if cfg.framerate.map_or(false, |f| f > 0) {
-        pre_elements.push_str("videorate drop-only=true ! ");
+    // Only inject software videoscale and videorate for CPU-bound pipelines.
+    // For hardware pipelines, d3d11convert / vapostproc handle scaling directly inside VRAM.
+    if !is_hw {
+        if has_target_res {
+            pre_elements.push_str("videoscale ! ");
+        }
+        if cfg.framerate.map_or(false, |f| f > 0) {
+            pre_elements.push_str("videorate drop-only=true ! ");
+        }
     }
 
     if let Some(fps) = cfg.framerate {
