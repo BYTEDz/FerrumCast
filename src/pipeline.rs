@@ -1,22 +1,13 @@
+// src/pipeline.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use crate::config::{Capabilities, StreamConfig};
+use crate::platform::PlatformBackend;
 use tracing::info;
 
 pub mod encoders;
-
-#[derive(Clone, Default)]
-pub struct PlatformContext {
-    #[cfg(target_os = "linux")]
-    pub portal_info: Option<(u32, i32)>,
-    #[cfg(target_os = "linux")]
-    #[allow(dead_code)]
-    pub portal_capture: Option<std::sync::Arc<crate::portal::PortalCapture>>,
-}
-
-impl std::fmt::Debug for PlatformContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PlatformContext").finish()
-    }
-}
+pub mod generic;
 
 pub struct PipelineBuilder;
 
@@ -55,7 +46,7 @@ impl PipelineBuilder {
     pub fn build_pipeline(
         cfg: &StreamConfig,
         enc: &dyn encoders::VideoEncoder,
-        ctx: &PlatformContext,
+        platform: &dyn PlatformBackend,
     ) -> String {
         let audio_bitrate = cfg.audio_bitrate * 1000;
         let udp_buf = cfg.udp_buffer_size;
@@ -65,7 +56,7 @@ impl PipelineBuilder {
                 "Building Audio-Only multi-client unicast stream pipeline (clients={}, audio_bitrate={}bps)",
                 cfg.client_host, audio_bitrate
             );
-            let src = self::sys::audio_source();
+            let src = platform.build_audio_source(cfg);
             let mut audio = format!(
                 "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
                 audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 bitrate={} ! rtpopuspay",
@@ -84,65 +75,19 @@ impl PipelineBuilder {
         }
 
         let is_hw = enc.is_hardware();
-        let is_vm = detect_hypervisor();
+        let video_desc = platform.build_video_source(cfg, enc.is_gpu_asic());
 
-        let is_hw_encoder = enc.is_gpu_asic();
-        let use_gdi = cfg.gdi || (is_vm && !is_hw_encoder);
+        let base_caps = generic::scale_caps(
+            cfg,
+            enc.pre_caps(),
+            is_hw,
+            video_desc.preferred_memory_feature,
+        );
 
-        if use_gdi && cfg!(target_os = "windows") {
-            info!("Utilizing GDI screen capturing (Virtual machine / VM mode active)");
-        }
-
-        #[cfg(target_os = "windows")]
-        let video_src = self::sys::video_source(ctx, use_gdi, cfg.show_cursor, cfg.monitor_index);
-        #[cfg(not(target_os = "windows"))]
-        let video_src = self::sys::video_source(ctx, cfg.show_cursor, cfg.monitor_index);
-
-        let (converter, caps) = if cfg!(target_os = "windows") {
-            if use_gdi {
-                let conv = "videoconvert n-threads=0".to_string();
-                let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, None);
-                (conv, c)
-            } else {
-                if enc.is_gpu_asic() {
-                    let conv = "d3d11convert".to_string();
-                    let mem_feature = Some("video/x-raw(memory:D3D11Memory)");
-                    let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature);
-                    (conv, c)
-                } else {
-                    let target_format = enc.pre_caps().unwrap_or("NV12");
-                    let gpu_mem_feature = Some("video/x-raw(memory:D3D11Memory)");
-                    let gpu_caps =
-                        self::generic::scale_caps(cfg, Some(target_format), true, gpu_mem_feature);
-
-                    let conv = format!(
-                        "d3d11convert ! {}d3d11download ! videoconvert n-threads=0",
-                        gpu_caps
-                    );
-                    let c = format!("video/x-raw,format={} ! ", target_format);
-                    (conv, c)
-                }
-            }
+        let caps = if let Some(ref raw_filter) = video_desc.raw_caps_filter {
+            format!("{}{}", raw_filter, base_caps)
         } else {
-            let is_vaapi = enc.gst_element() == "vah264enc" || enc.gst_element() == "vah265enc";
-            let mem_feature = if is_vaapi {
-                Some("video/x-raw(memory:VAMemory)")
-            } else if enc.gst_element() == "nvh264enc" {
-                Some("video/x-raw(memory:GLMemory)")
-            } else {
-                None
-            };
-
-            let conv = if is_vaapi {
-                "vapostproc".to_string()
-            } else if enc.gst_element() == "nvh264enc" {
-                "glcolorconvert".to_string()
-            } else {
-                "videoconvert n-threads=0".to_string()
-            };
-
-            let c = self::generic::scale_caps(cfg, enc.pre_caps(), is_hw, mem_feature);
-            (conv, c)
+            base_caps
         };
 
         let qbufs = cfg.queue_max_buffers;
@@ -156,8 +101,8 @@ impl PipelineBuilder {
                 video/x-h265,stream-format=byte-stream,alignment=au ! \
                 queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
                 rtph265pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
-                video_src = video_src,
-                converter = converter,
+                video_src = video_desc.pipeline_fragment,
+                converter = video_desc.preferred_converter,
                 caps = caps,
                 enc_element = enc.gst_element(),
                 enc_params = enc.encode_params(cfg),
@@ -173,8 +118,8 @@ impl PipelineBuilder {
                 video/x-h264,stream-format=byte-stream,alignment=au ! \
                 queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
                 rtph264pay mtu={mtu} config-interval=-1 pt=96 aggregate-mode={agg}",
-                video_src = video_src,
-                converter = converter,
+                video_src = video_desc.pipeline_fragment,
+                converter = video_desc.preferred_converter,
                 caps = caps,
                 enc_element = enc.gst_element(),
                 enc_params = enc.encode_params(cfg),
@@ -186,7 +131,7 @@ impl PipelineBuilder {
         };
 
         let mut audio = if cfg.audio {
-            let src = self::sys::audio_source();
+            let src = platform.build_audio_source(cfg);
             format!(
                 "{} ! queue max-size-buffers=5 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
                 audioconvert ! audioresample ! opusenc inband-fec=true frame-size=10 audio-type=2051 bitrate={} ! rtpopuspay",
@@ -220,38 +165,7 @@ impl PipelineBuilder {
         format!("{} ! {}{}", video, video_sink, audio_branch)
     }
 
-    #[cfg(target_os = "linux")]
-    pub fn is_wayland() -> bool {
-        self::sys::is_wayland()
-    }
-
     pub fn probe_capabilities() -> Capabilities {
         crate::config::probe_capabilities()
     }
 }
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn detect_hypervisor() -> bool {
-    #[cfg(target_arch = "x86")]
-    use std::arch::x86::__cpuid;
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::__cpuid;
-
-    let res = __cpuid(1);
-    (res.ecx & (1 << 31)) != 0
-}
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn detect_hypervisor() -> bool {
-    false
-}
-
-mod generic;
-
-#[cfg(target_os = "linux")]
-#[path = "pipeline/linux.rs"]
-mod sys;
-
-#[cfg(target_os = "windows")]
-#[path = "pipeline/windows.rs"]
-mod sys;

@@ -1,4 +1,9 @@
+// src/ipc.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use crate::config::{Capabilities, StreamConfig};
+use crate::loc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "linux")]
@@ -8,12 +13,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 use tracing::{error, info, warn};
-
-pub mod loc {
-    pub const MSG_CLIENT_CONNECTED: &str = "ipc_client_connected";
-    pub const MSG_CLIENT_DISCONNECTED: &str = "ipc_client_disconnected";
-    pub const MSG_DESERIALIZATION_FAILED: &str = "ipc_json_deserialization_failed";
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -49,7 +48,9 @@ pub struct IpcServer {
 
 impl IpcServer {
     pub fn new(path: &str) -> Self {
-        Self { path: path.to_string() }
+        Self {
+            path: path.to_string(),
+        }
     }
 
     pub async fn run<F, Fut>(
@@ -72,15 +73,20 @@ impl IpcServer {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+                let _ =
+                    std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
             }
             info!("IPC listening on {}", self.path);
             loop {
                 let (socket, _) = match listener.accept().await {
                     Ok(s) => s,
-                    Err(e) => { error!("accept error: {}", e); continue; }
+                    Err(e) => {
+                        error!("accept error: {}", e);
+                        continue;
+                    }
                 };
-                self.spawn_client_task(socket, handler.clone(), global_tx.subscribe()).await;
+                self.spawn_client_task(socket, handler.clone(), global_tx.subscribe())
+                    .await;
             }
         }
 
@@ -88,7 +94,9 @@ impl IpcServer {
         {
             use tokio::net::windows::named_pipe::ServerOptions;
             info!("IPC listening on named pipe: {}", self.path);
-            let mut server = ServerOptions::new().first_pipe_instance(true).create(&self.path)?;
+            let mut server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&self.path)?;
             loop {
                 if let Err(e) = server.connect().await {
                     error!("pipe connect error: {}", e);
@@ -97,7 +105,8 @@ impl IpcServer {
                 }
                 let connected_client = server;
                 server = ServerOptions::new().create(&self.path)?;
-                self.spawn_client_task(connected_client, handler.clone(), global_tx.subscribe()).await;
+                self.spawn_client_task(connected_client, handler.clone(), global_tx.subscribe())
+                    .await;
             }
         }
     }
@@ -112,7 +121,7 @@ impl IpcServer {
         F: Fn(InboundMessage) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ()> + Send,
     {
-        info!("{}", loc::MSG_CLIENT_CONNECTED);
+        info!("{}", loc::MSG_IPC_CLIENT_CONNECTED);
         tokio::spawn(async move {
             let (reader, mut writer) = tokio::io::split(stream);
             let mut buf_reader = tokio::io::BufReader::new(reader);
@@ -126,14 +135,24 @@ impl IpcServer {
                         Ok(0) => break,
                         Ok(_) => {
                             let trimmed = line.trim();
-                            if trimmed.is_empty() { continue; }
+                            if trimmed.is_empty() {
+                                continue;
+                            }
                             info!("IPC raw line received: {}", trimmed);
                             match serde_json::from_str::<InboundMessage>(trimmed) {
                                 Ok(msg) => handler(msg).await,
-                                Err(e) => warn!("{}: {} | raw: {}", loc::MSG_DESERIALIZATION_FAILED, e, trimmed)
+                                Err(e) => warn!(
+                                    "{}: {} | raw: {}",
+                                    loc::MSG_IPC_DESERIALIZATION_FAILED,
+                                    e,
+                                    trimmed
+                                ),
                             }
                         }
-                        Err(e) => { warn!("IPC read line error: {}", e); break; }
+                        Err(e) => {
+                            warn!("IPC read line error: {}", e);
+                            break;
+                        }
                     }
                 }
             };
@@ -144,20 +163,24 @@ impl IpcServer {
                         Ok(msg) => {
                             if let Ok(mut data) = serde_json::to_vec(&msg) {
                                 data.push(b'\n');
-                                if writer.write_all(&data).await.is_err() { break; }
+                                if writer.write_all(&data).await.is_err() {
+                                    break;
+                                }
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             warn!("IPC write task lagged by {} messages", n);
                             continue;
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => { break; }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
                     }
                 }
             };
 
             tokio::select! { _ = read_task => {}, _ = write_task => {}, }
-            info!("{}", loc::MSG_CLIENT_DISCONNECTED);
+            info!("{}", loc::MSG_IPC_CLIENT_DISCONNECTED);
         });
     }
 }

@@ -1,36 +1,23 @@
+// src/main.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 mod config;
-#[cfg(target_os = "windows")]
-mod gdi_capture;
 mod input;
 mod ipc;
+mod loc;
 mod pipeline;
+mod platform;
 mod stream;
 
-#[cfg(target_os = "linux")]
-mod portal;
-
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
-
-use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" {
     fn SetDllDirectoryW(lpPathName: *const u16) -> i32;
-}
-
-#[cfg(target_os = "linux")]
-fn get_token_file_path() -> std::path::PathBuf {
-    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
-        std::path::PathBuf::from(config_home).join("ferrumcast.token")
-    } else if let Ok(home) = std::env::var("HOME") {
-        std::path::PathBuf::from(home)
-            .join(".config")
-            .join("ferrumcast.token")
-    } else {
-        std::path::PathBuf::from("/tmp/ferrumcast.token")
-    }
 }
 
 const VERSION: &str = env!("FERRUMCAST_BUILD_VERSION");
@@ -43,13 +30,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // --- Windows: Pin DLL resolution to the binary's own directory FIRST ---
-    // Must happen before ANY GStreamer call (including --probe) so the bundled
-    // DLLs are found instead of whatever happens to be on the system PATH.
     #[cfg(target_os = "windows")]
     {
         unsafe {
-            // DPI awareness
             let _ = windows::Win32::UI::WindowsAndMessaging::SetProcessDPIAware();
         }
 
@@ -57,11 +40,6 @@ async fn main() -> Result<()> {
             if let Some(exe_dir) = exe_path.parent() {
                 use std::os::windows::ffi::OsStrExt;
 
-                // 1. Tell Windows loader to prefer the exe's own folder.
-                //    We do NOT call SetDefaultDllDirectories here because that
-                //    replaces the normal search order; just calling SetDllDirectoryW
-                //    inserts exe_dir as the *first* candidate while leaving
-                //    system32 and the rest intact.
                 unsafe {
                     let wide: Vec<u16> = exe_dir
                         .as_os_str()
@@ -71,29 +49,19 @@ async fn main() -> Result<()> {
                     SetDllDirectoryW(wide.as_ptr());
                 }
 
-                // 2. Prepend exe_dir to PATH so every child process (gst-plugin-scanner)
-                //    also resolves from there first.
                 let current_path = std::env::var("PATH").unwrap_or_default();
                 let new_path = format!("{};{}", exe_dir.display(), current_path);
                 unsafe {
                     std::env::set_var("PATH", &new_path);
-                }
-
-                // 3. GStreamer: restrict plugin scan to exe_dir only.
-                //    Clearing GST_PLUGIN_SYSTEM_PATH prevents it from scanning
-                //    any system-wide registry locations.
-                unsafe {
                     std::env::set_var("GST_PLUGIN_PATH", exe_dir);
                     std::env::set_var("GST_PLUGIN_SYSTEM_PATH", "");
                     std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", "");
 
-                    // 4. Per-version registry cache so different installs don't collide.
                     let cache_path = exe_dir.join("gst-registry.bin");
                     std::env::set_var("GST_REGISTRY", &cache_path);
                     std::env::set_var("GST_REGISTRY_1_0", &cache_path);
                 }
 
-                // 5. Point GStreamer's plugin scanner to the bundled copy if present.
                 let local_scanner = exe_dir.join("gst-plugin-scanner.exe");
                 if local_scanner.exists() {
                     unsafe {
@@ -114,13 +82,14 @@ async fn main() -> Result<()> {
     unsafe {
         std::env::set_var("NICE_DISABLE_UPNP", "1");
     }
+
     let subscriber = FmtSubscriber::builder()
         .with_writer(std::io::stderr)
         .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    info!("starting ferrumcast engine v{}", VERSION);
+    info!("{}: v{}", loc::MSG_STARTING_ENGINE, VERSION);
 
     let (outbound_tx, _outbound_rx) = tokio::sync::broadcast::channel(32);
 
@@ -133,16 +102,24 @@ async fn main() -> Result<()> {
     let initial_cfg = config_store.get();
 
     #[cfg(target_os = "linux")]
-    let token_path = get_token_file_path();
-
-    #[cfg(target_os = "linux")]
     let initial_token = {
         if initial_cfg.token.is_some() {
             initial_cfg.token.clone()
         } else {
+            let token_path = platform::linux::LinuxBackend::resolve_token_file_path();
             std::fs::read_to_string(&token_path).ok()
         }
     };
+
+    #[cfg(not(target_os = "linux"))]
+    let initial_token: Option<String> = None;
+
+    let platform_backend = platform::create_platform_backend(
+        initial_token,
+        outbound_tx.clone(),
+        initial_cfg.audio_only,
+    )
+    .await?;
 
     #[cfg(target_os = "linux")]
     let ipc_path = "/tmp/ferrumcast.sock";
@@ -155,59 +132,20 @@ async fn main() -> Result<()> {
     info!("binding IPC to {}", ipc_path);
     let server = Arc::new(ipc::IpcServer::new(ipc_path));
 
-    #[cfg(target_os = "linux")]
-    let portal_capture = if pipeline::PipelineBuilder::is_wayland() && !initial_cfg.audio_only {
-        let capture_result =
-            portal::request_screencast(initial_token.clone(), Some(outbound_tx.clone())).await;
-        let capture_result = match capture_result {
-            Ok(c) => Ok(c),
-            Err(ref e) if initial_token.is_some() => {
-                error!(
-                    "portal failed with saved token (token may be stale): {}. Deleting token and retrying fresh.",
-                    e
-                );
-                let _ = std::fs::remove_file(&token_path);
-                portal::request_screencast(None, Some(outbound_tx.clone())).await
-            }
-            Err(e) => Err(e),
-        };
-        match capture_result {
-            Ok(c) => {
-                if let Some(ref t) = c.restore_token {
-                    info!("persisting portal token to {:?}", token_path);
-                    if let Some(parent) = token_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = std::fs::write(&token_path, t);
-                }
-                Some(c)
-            }
-            Err(e) => {
-                error!("portal failed: {}. falling back to test src.", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    #[cfg(target_os = "linux")]
-    let portal_capture_arc = portal_capture.map(Arc::new);
-
-    let platform_ctx = Arc::new(pipeline::PlatformContext {
-        #[cfg(target_os = "linux")]
-        portal_info: portal_capture_arc.as_ref().map(|c| (c.node_id, c.fd)),
-        #[cfg(target_os = "linux")]
-        portal_capture: portal_capture_arc.clone(),
-    });
-
     let enc = pipeline::encoders::resolve_encoder(&initial_cfg.encoder, &caps);
-    let pipeline_str =
-        pipeline::PipelineBuilder::build_pipeline(&initial_cfg, enc.as_ref(), &platform_ctx);
+    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
+        &initial_cfg,
+        enc.as_ref(),
+        platform_backend.as_ref(),
+    );
 
     info!("pipeline: {}", pipeline_str);
 
-    let stream_manager = match stream::StreamManager::new(&pipeline_str, outbound_tx.clone()) {
+    let stream_manager = match stream::StreamManager::new(
+        &pipeline_str,
+        platform_backend.clone(),
+        outbound_tx.clone(),
+    ) {
         Ok(m) => Arc::new(m),
         Err(e) => {
             error!("failed to init stream: {}", e);
@@ -223,9 +161,9 @@ async fn main() -> Result<()> {
     let config_c = config_store.clone();
     let caps_c = Arc::clone(&caps);
     let outbound_tx_c = outbound_tx.clone();
-    let platform_ctx_c = Arc::clone(&platform_ctx);
+    let platform_backend_c = Arc::clone(&platform_backend);
 
-    info!("engine ready");
+    info!("{}", loc::MSG_ENGINE_READY);
 
     let outbound_tx_server = outbound_tx_c.clone();
     let _server_task = tokio::spawn(async move {
@@ -236,7 +174,7 @@ async fn main() -> Result<()> {
                     let config = config_c.clone();
                     let caps = caps_c.clone();
                     let tx = outbound_tx_c.clone();
-                    let platform_ctx = platform_ctx_c.clone();
+                    let platform = platform_backend_c.clone();
                     async move {
                         match msg {
                             ipc::InboundMessage::Control(ipc::ControlMessage::StopStream) => {
@@ -254,7 +192,7 @@ async fn main() -> Result<()> {
                                 let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
                                     &cfg,
                                     enc.as_ref(),
-                                    &platform_ctx,
+                                    platform.as_ref(),
                                 );
 
                                 info!("new pipeline: {}", pipeline_str);
@@ -293,14 +231,14 @@ async fn main() -> Result<()> {
                                 }
 
                                 if cfg.monitor_index != prev_index {
-                                    info!("Switching monitor from {} to {}", prev_index, cfg.monitor_index);
+                                    info!("{}: {} -> {}", loc::MSG_MONITOR_SWITCHING, prev_index, cfg.monitor_index);
                                     config.set(cfg.clone());
 
                                     let enc = pipeline::encoders::resolve_encoder(&cfg.encoder, &caps);
                                     let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
                                         &cfg,
                                         enc.as_ref(),
-                                        &platform_ctx,
+                                        platform.as_ref(),
                                     );
 
                                     info!("restarting pipeline for monitor switch: {}", pipeline_str);
@@ -309,7 +247,11 @@ async fn main() -> Result<()> {
                                         if cfg.monitor_index != 0 {
                                             cfg.monitor_index = 0;
                                             config.set(cfg.clone());
-                                            let fallback_pipe = pipeline::PipelineBuilder::build_pipeline(&cfg, enc.as_ref(), &platform_ctx);
+                                            let fallback_pipe = pipeline::PipelineBuilder::build_pipeline(
+                                                &cfg,
+                                                enc.as_ref(),
+                                                platform.as_ref(),
+                                            );
                                             let _ = stream.restart_pipeline(&fallback_pipe);
                                         }
                                     }
@@ -324,10 +266,7 @@ async fn main() -> Result<()> {
                                 let _ = stream.force_keyframe();
                             }
                             ipc::InboundMessage::MouseInput(ref input) => {
-                                #[cfg(target_os = "windows")]
-                                input::handle_mouse_windows(input);
-                                #[cfg(target_os = "linux")]
-                                tracing::debug!("Linux mouse input routed through PCLink Core /dev/uinput: {:?}", input);
+                                platform.handle_mouse_input(input);
                             }
                         }
                     }
@@ -340,12 +279,8 @@ async fn main() -> Result<()> {
         }
     });
 
-    #[cfg(target_os = "linux")]
-    let _keep_portal = portal_capture_arc;
-
     tokio::signal::ctrl_c().await?;
-    info!("shutting down");
-    #[cfg(target_os = "linux")]
-    drop(_keep_portal);
+    info!("{}", loc::MSG_ENGINE_SHUTDOWN);
+    let _ = stream_manager.stop();
     Ok(())
 }

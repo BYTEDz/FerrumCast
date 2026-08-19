@@ -1,3 +1,7 @@
+// src/platform/linux/portal.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use anyhow::{Result, anyhow};
 use ashpd::desktop::screencast::{
     CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, StartCastOptions,
@@ -8,8 +12,8 @@ use tokio::sync::broadcast::Sender;
 use tracing::info;
 
 use crate::ipc::OutboundMessage;
+use crate::loc;
 
-/// Manages the lifetime of an active XDG Desktop Portal screencast session.
 pub struct PortalCapture {
     pub node_id: u32,
     pub fd: i32,
@@ -17,13 +21,13 @@ pub struct PortalCapture {
     _screencast_session: ashpd::desktop::Session<Screencast>,
 }
 
-/// Establishes screencast portal session without triggering RemoteDesktop input prompts.
 pub async fn request_screencast(
     restore_token: Option<String>,
     tx: Option<Sender<OutboundMessage>>,
 ) -> Result<PortalCapture> {
     info!(
-        "requesting screen capture via XDG portal... (restore_token: {:?})",
+        "{}: restore_token={:?}",
+        loc::MSG_PORTAL_REQUESTING,
         restore_token
     );
 
@@ -38,8 +42,6 @@ pub async fn request_screencast(
             SelectSourcesOptions::default()
                 .set_cursor_mode(Some(CursorMode::Embedded))
                 .set_restore_token(restore_token.as_deref())
-                // ExplicitlyRevoked = persist until manually revoked (ashpd naming is inverted
-                // vs intuition — this IS the "keep token alive" mode, NOT DoNot or Application)
                 .set_persist_mode(Some(PersistMode::ExplicitlyRevoked)),
         )
         .await?;
@@ -63,8 +65,10 @@ pub async fn request_screencast(
 
     let node_id = stream.pipe_wire_node_id();
     info!(
-        "portal granted stream: node_id={} | restore_token: {:?}",
-        node_id, new_token
+        "{}: node_id={} | restore_token={:?}",
+        loc::MSG_PORTAL_GRANTED,
+        node_id,
+        new_token
     );
 
     let fd = screencast_proxy
