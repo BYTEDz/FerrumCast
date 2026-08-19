@@ -15,21 +15,9 @@ pub fn scale_caps(
 
     let has_target_res = cfg.width.map_or(false, |w| w > 0) || cfg.height.map_or(false, |h| h > 0);
 
-    // Only inject software videoscale and videorate for CPU-bound pipelines.
-    // For hardware pipelines, d3d11convert / vapostproc handle scaling directly inside VRAM.
-    if !is_hw {
-        if has_target_res {
-            pre_elements.push_str("videoscale ! ");
-        }
-        if cfg.framerate.map_or(false, |f| f > 0) {
-            pre_elements.push_str("videorate drop-only=true ! ");
-        }
-    }
-
-    if let Some(fps) = cfg.framerate {
-        if fps > 0 {
-            parts.push(format!("framerate={}/1", fps));
-        }
+    // Apply videoscale when a specific target resolution is requested
+    if has_target_res && mem_feature.is_none() {
+        pre_elements.push_str("videoscale ! ");
     }
 
     if let Some(w) = cfg.width {
@@ -50,12 +38,7 @@ pub fn scale_caps(
         format.unwrap_or("I420")
     };
 
-    if !is_hw && format_str == "I420" {
-        pre_elements.push_str("videoconvert n-threads=0 ! ");
-    }
-
     parts.push(format!("format={}", format_str));
-    parts.push(format!("colorimetry={}", cfg.colorimetry));
 
     let media_type = mem_feature.unwrap_or("video/x-raw");
     let caps_string = format!("{},{} ! ", media_type, parts.join(","));

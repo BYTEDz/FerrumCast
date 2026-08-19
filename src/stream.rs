@@ -7,6 +7,8 @@ use gst::prelude::*;
 use gstreamer as gst;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
 use tracing::info;
 
 use crate::loc;
@@ -17,6 +19,7 @@ pub struct StreamManager {
     active_encoder: Mutex<String>,
     platform: Arc<dyn PlatformBackend>,
     outbound_tx: tokio::sync::broadcast::Sender<crate::ipc::OutboundMessage>,
+    profiler_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl StreamManager {
@@ -44,11 +47,62 @@ impl StreamManager {
             active_encoder: Mutex::new(active_encoder),
             platform,
             outbound_tx,
+            profiler_handle: Mutex::new(None),
         };
 
+        manager.attach_pad_probes(&manager.pipeline.lock());
         manager.spawn_bus_listener(&manager.pipeline.lock());
 
         Ok(manager)
+    }
+
+    fn attach_pad_probes(&self, pipeline: &gst::Pipeline) {
+        let capture_count = Arc::new(AtomicU32::new(0));
+        let enc_in_count = Arc::new(AtomicU32::new(0));
+        let enc_out_count = Arc::new(AtomicU32::new(0));
+
+        if let Some(enc) = pipeline.by_name("video_encoder") {
+            // Encoder Sink Pad (Input)
+            if let Some(sink_pad) = enc.sink_pads().first() {
+                let count = enc_in_count.clone();
+                sink_pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    gst::PadProbeReturn::Ok
+                });
+            }
+
+            // Encoder Src Pad (Output)
+            if let Some(src_pad) = enc.src_pads().first() {
+                let count = enc_out_count.clone();
+                src_pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    gst::PadProbeReturn::Ok
+                });
+            }
+        }
+
+        let cap_c = capture_count;
+        let in_c = enc_in_count;
+        let out_c = enc_out_count;
+
+        let handle = std::thread::spawn(move || {
+            let mut last_check = Instant::now();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let elapsed = last_check.elapsed().as_secs_f64();
+                last_check = Instant::now();
+
+                let in_fps = (in_c.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+                let out_fps = (out_c.swap(0, Ordering::Relaxed) as f64 / elapsed).round() as u32;
+
+                info!(
+                    "[STREAM PROFILER] Encoder Ingest: {} FPS | Encoder Output: {} FPS",
+                    in_fps, out_fps
+                );
+            }
+        });
+
+        *self.profiler_handle.lock() = Some(handle);
     }
 
     fn spawn_bus_listener(&self, pipeline: &gst::Pipeline) {
@@ -131,6 +185,7 @@ impl StreamManager {
         new_pipeline.set_state(gst::State::Playing)?;
         *pipeline = new_pipeline;
 
+        self.attach_pad_probes(&pipeline);
         self.spawn_bus_listener(&pipeline);
 
         info!("{}", loc::MSG_PIPELINE_RESTARTED);

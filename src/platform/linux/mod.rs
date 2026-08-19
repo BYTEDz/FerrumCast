@@ -108,42 +108,31 @@ impl PlatformBackend for LinuxBackend {
         cfg: &StreamConfig,
         _is_hardware_encoder: bool,
     ) -> VideoSourceDescriptor {
-        let is_vaapi = matches!(
-            cfg.encoder,
-            crate::config::EncoderChoice::VaH264 | crate::config::EncoderChoice::VaH265
-        );
         let is_nvenc = matches!(
             cfg.encoder,
             crate::config::EncoderChoice::Nvenc | crate::config::EncoderChoice::NvencH265
         );
 
-        let preferred_memory_feature = if is_vaapi {
-            Some("video/x-raw(memory:VAMemory)")
-        } else if is_nvenc {
-            Some("video/x-raw(memory:GLMemory)")
+        let (preferred_converter, preferred_memory_feature) = if is_nvenc {
+            (
+                "glupload ! glcolorconvert".to_string(),
+                Some("video/x-raw(memory:GLMemory)"),
+            )
         } else {
-            None
-        };
-
-        let preferred_converter = if is_vaapi {
-            "vapostproc".to_string()
-        } else if is_nvenc {
-            "glupload ! glcolorconvert".to_string()
-        } else {
-            "videoconvert n-threads=0".to_string()
+            ("videoconvert n-threads=0".to_string(), None)
         };
 
         let pipeline_fragment = if let Some(ref portal) = self.portal_capture {
             format!(
-                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
+                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",
                 portal.fd, portal.node_id
             )
         } else if self.display_env == LinuxDisplayEnvironment::Wayland {
-            "videotestsrc is-live=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream"
+            "videotestsrc is-live=true ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream"
                 .to_string()
         } else {
             format!(
-                "ximagesrc use-damage=true show-pointer={} do-timestamp=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
+                "ximagesrc use-damage=true show-pointer={} do-timestamp=true ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",
                 if cfg.show_cursor { "true" } else { "false" }
             )
         };

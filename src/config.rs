@@ -1,3 +1,7 @@
+// src/config.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -36,7 +40,7 @@ fn default_nvenc_tune() -> String {
     "ultra-low-latency".to_string()
 }
 fn default_vaapi_target_usage() -> u32 {
-    1
+    7 // 7 = Ultra-Fast / Real-time Low Latency (1 is Slowest/Quality)
 }
 fn default_qsv_target_usage() -> u32 {
     7
@@ -60,10 +64,10 @@ fn default_rtp_mtu() -> u32 {
     1200
 }
 fn default_queue_max_time_ns() -> u64 {
-    0
+    33_000_000
 }
 fn default_queue_max_buffers() -> u32 {
-    1
+    3
 }
 fn default_aggregate_mode() -> String {
     "zero-latency".to_string()
@@ -266,11 +270,6 @@ pub fn probe_capabilities() -> Capabilities {
 pub struct ConfigStore(pub RwLock<StreamConfig>);
 
 impl ConfigStore {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self(RwLock::new(StreamConfig::default()))
-    }
-
     pub fn new_from_args() -> Self {
         let mut cfg = StreamConfig::default();
         let mut args = std::env::args().skip(1).peekable();

@@ -1,3 +1,7 @@
+// src/pipeline/encoders.rs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2025 AZHAR ZOUHIR / BYTEDz
+
 use crate::config::{Capabilities, EncoderChoice, StreamConfig};
 
 pub trait VideoEncoder: Send + Sync {
@@ -119,23 +123,24 @@ impl VideoEncoder for VaH264Encoder {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
         let is_cqp = cfg.rc_mode == "cqp";
+        let target_usage = cfg.vaapi_target_usage;
 
         if is_cqp {
             format!(
                 "rate-control=cqp qp-i={cqp} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0 num-slices=4",
+                target-usage={tu} ref-frames=1 b-frames=0",
                 cqp = cfg.cqp_value,
                 key_int = key_int,
-                tu = cfg.vaapi_target_usage,
+                tu = target_usage,
             )
         } else {
             format!(
                 "bitrate={bitrate} rate-control={rc} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0 num-slices=4",
+                target-usage={tu} ref-frames=1 b-frames=0",
                 bitrate = bitrate,
                 rc = cfg.rc_mode,
                 key_int = key_int,
-                tu = cfg.vaapi_target_usage,
+                tu = target_usage,
             )
         }
     }
@@ -159,23 +164,24 @@ impl VideoEncoder for VaH265Encoder {
         let bitrate = cfg.bitrate;
         let key_int = cfg.key_int_max;
         let is_cqp = cfg.rc_mode == "cqp";
+        let target_usage = cfg.vaapi_target_usage;
 
         if is_cqp {
             format!(
                 "rate-control=cqp qp-i={cqp} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0 num-slices=4",
+                target-usage={tu} ref-frames=1 b-frames=0",
                 cqp = cfg.cqp_value,
                 key_int = key_int,
-                tu = cfg.vaapi_target_usage,
+                tu = target_usage,
             )
         } else {
             format!(
                 "bitrate={bitrate} rate-control={rc} key-int-max={key_int} \
-                target-usage={tu} ref-frames=1 b-frames=0 num-slices=4",
+                target-usage={tu} ref-frames=1 b-frames=0",
                 bitrate = bitrate,
                 rc = cfg.rc_mode,
                 key_int = key_int,
-                tu = cfg.vaapi_target_usage,
+                tu = target_usage,
             )
         }
     }
