@@ -256,8 +256,14 @@ const CANDIDATES: &[(&str, &str)] = &[
 const CANDIDATES: &[(&str, &str)] = &[("x265enc", "x265"), ("x264enc", "x264")];
 
 fn verify_encoder(element: &str) -> bool {
+    // 1. Check if the element plugin is registered in GStreamer
+    if gst::ElementFactory::find(element).is_none() {
+        return false;
+    }
+
+    // 2. Test instantiation and pipeline execution in Playing state
     let pipeline_desc = format!(
-        "videotestsrc num-buffers=1 is-live=false ! videoconvert ! {} ! fakesink sync=false",
+        "videotestsrc num-buffers=2 is-live=false ! videoconvert ! {} ! fakesink sync=false",
         element
     );
 
@@ -269,12 +275,22 @@ fn verify_encoder(element: &str) -> bool {
         Err(_) => return false,
     };
 
-    let res = pipeline.set_state(gst::State::Paused);
+    let res = pipeline.set_state(gst::State::Playing);
     let success = match res {
         Ok(gst::StateChangeSuccess::Success) => true,
         Ok(gst::StateChangeSuccess::Async) => {
-            let (state_res, _, _) = pipeline.state(Some(gst::ClockTime::from_mseconds(500)));
-            state_res.is_ok()
+            let bus = pipeline.bus();
+            if let Some(bus) = bus {
+                // Wait for either an error or buffer flow
+                let msg = bus.timed_pop_filtered(
+                    Some(gst::ClockTime::from_mseconds(500)),
+                    &[gst::MessageType::Error, gst::MessageType::Eos],
+                );
+                // If there's an error message on the bus, encoder failed
+                !matches!(msg.as_ref().map(|m| m.view()), Some(gst::MessageView::Error(_)))
+            } else {
+                true
+            }
         }
         _ => false,
     };
