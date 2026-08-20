@@ -16,7 +16,16 @@ pub trait VideoEncoder: Send + Sync {
     fn is_hardware(&self) -> bool {
         true
     }
+    #[allow(dead_code)]
     fn is_gpu_asic(&self) -> bool {
+        false
+    }
+    #[allow(dead_code)]
+    fn is_nvenc(&self) -> bool {
+        false
+    }
+    #[allow(dead_code)]
+    fn is_d3d11_native(&self) -> bool {
         false
     }
 }
@@ -231,6 +240,10 @@ impl VideoEncoder for NvencEncoder {
     fn is_gpu_asic(&self) -> bool {
         true
     }
+
+    fn is_nvenc(&self) -> bool {
+        true
+    }
 }
 
 pub struct NvencH265Encoder;
@@ -282,6 +295,10 @@ impl VideoEncoder for NvencH265Encoder {
     fn is_gpu_asic(&self) -> bool {
         true
     }
+
+    fn is_nvenc(&self) -> bool {
+        true
+    }
 }
 
 pub struct QsvEncoder;
@@ -318,6 +335,10 @@ impl VideoEncoder for QsvEncoder {
     }
 
     fn is_gpu_asic(&self) -> bool {
+        true
+    }
+
+    fn is_d3d11_native(&self) -> bool {
         true
     }
 }
@@ -362,6 +383,10 @@ impl VideoEncoder for QsvH265Encoder {
     fn is_gpu_asic(&self) -> bool {
         true
     }
+
+    fn is_d3d11_native(&self) -> bool {
+        true
+    }
 }
 
 pub struct AmfEncoder;
@@ -385,6 +410,10 @@ impl VideoEncoder for AmfEncoder {
     }
 
     fn is_gpu_asic(&self) -> bool {
+        true
+    }
+
+    fn is_d3d11_native(&self) -> bool {
         true
     }
 }
@@ -414,6 +443,10 @@ impl VideoEncoder for AmfH265Encoder {
     }
 
     fn is_gpu_asic(&self) -> bool {
+        true
+    }
+
+    fn is_d3d11_native(&self) -> bool {
         true
     }
 }
@@ -467,31 +500,41 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
         EncoderChoice::VaH265 if has("vah265") => Box::new(VaH265Encoder),
         EncoderChoice::VaH264 if has("vah264") => Box::new(VaH264Encoder),
         EncoderChoice::X265 if has("x265") => Box::new(X265Encoder),
-        EncoderChoice::X264 => Box::new(X264Encoder),
+        EncoderChoice::X264 if has("x264") => Box::new(X264Encoder),
         EncoderChoice::Auto => {
-            if has("nvenc_h265") {
-                return Box::new(NvencH265Encoder);
-            }
+            // Prioritize H.264 hardware encoders for universal baseline compatibility
             if has("nvenc") {
                 return Box::new(NvencEncoder);
-            }
-            if has("vah265") {
-                return Box::new(VaH265Encoder);
             }
             if has("vah264") {
                 return Box::new(VaH264Encoder);
             }
-            if has("intel_qsv_h265") {
-                return Box::new(QsvH265Encoder);
+            if has("amd_amf") {
+                return Box::new(AmfEncoder);
             }
             if has("intel_qsv") {
                 return Box::new(QsvEncoder);
             }
+
+            #[cfg(target_os = "windows")]
+            {
+                if has("windows_mf") {
+                    return Box::new(MfEncoder);
+                }
+            }
+
+            // H.265 hardware encoders
+            if has("nvenc_h265") {
+                return Box::new(NvencH265Encoder);
+            }
+            if has("vah265") {
+                return Box::new(VaH265Encoder);
+            }
             if has("amd_amf_h265") {
                 return Box::new(AmfH265Encoder);
             }
-            if has("amd_amf") {
-                return Box::new(AmfEncoder);
+            if has("intel_qsv_h265") {
+                return Box::new(QsvH265Encoder);
             }
 
             #[cfg(target_os = "windows")]
@@ -499,11 +542,9 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
                 if has("windows_mf_h265") {
                     return Box::new(MfH265Encoder);
                 }
-                if has("windows_mf") {
-                    return Box::new(MfEncoder);
-                }
             }
 
+            // Software fallbacks
             if has("x264") {
                 return Box::new(X264Encoder);
             }
@@ -515,38 +556,39 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
         }
         _ => {
             tracing::warn!(
-                "Requested encoder not available, falling back to best available encoder"
+                "Requested encoder not available, falling back to verified capability list"
             );
-            if has("nvenc_h265") {
-                return Box::new(NvencH265Encoder);
-            }
             if has("nvenc") {
                 return Box::new(NvencEncoder);
-            }
-            if has("vah265") {
-                return Box::new(VaH265Encoder);
             }
             if has("vah264") {
                 return Box::new(VaH264Encoder);
             }
-            if has("intel_qsv_h265") {
-                return Box::new(QsvH265Encoder);
+            if has("amd_amf") {
+                return Box::new(AmfEncoder);
             }
             if has("intel_qsv") {
                 return Box::new(QsvEncoder);
             }
+
+            #[cfg(target_os = "windows")]
+            {
+                if has("windows_mf") {
+                    return Box::new(MfEncoder);
+                }
+            }
+
+            if has("nvenc_h265") {
+                return Box::new(NvencH265Encoder);
+            }
+            if has("vah265") {
+                return Box::new(VaH265Encoder);
+            }
             if has("amd_amf_h265") {
                 return Box::new(AmfH265Encoder);
             }
-            if has("amd_amf") {
-                return Box::new(AmfEncoder);
-            }
-
-            if has("x264") {
-                return Box::new(X264Encoder);
-            }
-            if has("x265") {
-                return Box::new(X265Encoder);
+            if has("intel_qsv_h265") {
+                return Box::new(QsvH265Encoder);
             }
 
             #[cfg(target_os = "windows")]
@@ -554,9 +596,13 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
                 if has("windows_mf_h265") {
                     return Box::new(MfH265Encoder);
                 }
-                if has("windows_mf") {
-                    return Box::new(MfEncoder);
-                }
+            }
+
+            if has("x264") {
+                return Box::new(X264Encoder);
+            }
+            if has("x265") {
+                return Box::new(X265Encoder);
             }
 
             Box::new(X264Encoder)

@@ -103,11 +103,19 @@ async fn main() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     let initial_token = {
-        if initial_cfg.token.is_some() {
-            initial_cfg.token.clone()
+        if let Some(ref t) = initial_cfg.token {
+            let trimmed = t.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         } else {
             let token_path = platform::linux::LinuxBackend::resolve_token_file_path();
-            std::fs::read_to_string(&token_path).ok()
+            std::fs::read_to_string(&token_path)
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
         }
     };
 

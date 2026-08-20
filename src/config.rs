@@ -5,8 +5,10 @@
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::{error, info, warn};
+
+use crate::loc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -40,7 +42,7 @@ fn default_nvenc_tune() -> String {
     "ultra-low-latency".to_string()
 }
 fn default_vaapi_target_usage() -> u32 {
-    4 // Balanced target usage preserves CABAC hardware encoding
+    4
 }
 fn default_qsv_target_usage() -> u32 {
     7
@@ -220,47 +222,91 @@ pub struct Capabilities {
     pub encoders: Vec<String>,
 }
 
+#[cfg(target_os = "linux")]
+const CANDIDATES: &[(&str, &str)] = &[
+    ("nvh265enc", "nvenc_h265"),
+    ("nvh264enc", "nvenc"),
+    ("vah265enc", "vah265"),
+    ("vah264enc", "vah264"),
+    ("qsvh265enc", "intel_qsv_h265"),
+    ("qsvh264enc", "intel_qsv"),
+    ("x265enc", "x265"),
+    ("x264enc", "x264"),
+];
+
+#[cfg(target_os = "windows")]
+const CANDIDATES: &[(&str, &str)] = &[
+    ("nvh265enc", "nvenc_h265"),
+    ("nvh264enc", "nvenc"),
+    ("amfh265enc", "amd_amf_h265"),
+    ("amfh264enc", "amd_amf"),
+    ("qsvh265enc", "intel_qsv_h265"),
+    ("qsvh264enc", "intel_qsv"),
+    ("mfh265enc", "windows_mf_h265"),
+    ("mfh264enc", "windows_mf"),
+    ("x265enc", "x265"),
+    ("x264enc", "x264"),
+];
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+const CANDIDATES: &[(&str, &str)] = &[("x265enc", "x265"), ("x264enc", "x264")];
+
+fn verify_encoder(element: &str) -> bool {
+    let pipeline_desc = format!(
+        "videotestsrc num-buffers=1 is-live=false ! videoconvert ! {} ! fakesink sync=false",
+        element
+    );
+
+    let pipeline = match gst::parse::launch(&pipeline_desc) {
+        Ok(elem) => match elem.dynamic_cast::<gst::Pipeline>() {
+            Ok(p) => p,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+
+    let res = pipeline.set_state(gst::State::Paused);
+    let success = match res {
+        Ok(gst::StateChangeSuccess::Success) => true,
+        Ok(gst::StateChangeSuccess::Async) => {
+            let (state_res, _, _) = pipeline.state(Some(gst::ClockTime::from_mseconds(150)));
+            state_res.is_ok()
+        }
+        _ => false,
+    };
+
+    let _ = pipeline.set_state(gst::State::Null);
+    success
+}
+
 pub fn probe_capabilities() -> Capabilities {
+    let verified_encoders = Arc::new(Mutex::new(Vec::new()));
+
+    std::thread::scope(|s| {
+        for (element, label) in CANDIDATES {
+            let verified = Arc::clone(&verified_encoders);
+            s.spawn(move || {
+                if verify_encoder(element) {
+                    info!("{}: {}", loc::MSG_PROBE_ENCODER_VERIFIED, label);
+                    let mut lock = verified.lock().unwrap();
+                    lock.push((*label).to_string());
+                } else {
+                    warn!("{}: {}", loc::MSG_PROBE_ENCODER_FAILED, label);
+                }
+            });
+        }
+    });
+
+    let lock = verified_encoders.lock().unwrap();
     let mut encoders = Vec::new();
-
-    let candidates = [
-        ("nvh265enc", "nvenc_h265"),
-        ("nvh264enc", "nvenc"),
-        ("mfh265enc", "windows_mf_h265"),
-        ("mfh264enc", "windows_mf"),
-        ("amfh265enc", "amd_amf_h265"),
-        ("amfh264enc", "amd_amf"),
-        ("qsvh265enc", "intel_qsv_h265"),
-        ("qsvh264enc", "intel_qsv"),
-        ("vah265enc", "vah265"),
-        ("vah264enc", "vah264"),
-        ("x265enc", "x265"),
-        ("x264enc", "x264"),
-    ];
-
-    for (element, label) in &candidates {
-        if let Ok(elem) = gst::ElementFactory::make(element).build() {
-            if elem.set_state(gst::State::Ready).is_ok() {
-                let _ = elem.set_state(gst::State::Null);
-                info!("encoder available and verified: {}", label);
-                encoders.push(label.to_string());
-            } else {
-                let _ = elem.set_state(gst::State::Null);
-                warn!(
-                    "encoder element {} created but failed State::Ready initialization (no hardware/driver)",
-                    element
-                );
-            }
-        } else {
-            warn!(
-                "encoder factory found but failed to instantiate: {}",
-                element
-            );
+    for (_, label) in CANDIDATES {
+        if lock.contains(&label.to_string()) {
+            encoders.push(label.to_string());
         }
     }
 
     if encoders.is_empty() {
-        warn!("No hardware encoders found, forcing x264 fallback");
+        warn!("No verified hardware encoders found, forcing x264 fallback");
         encoders.push("x264".to_string());
     }
 

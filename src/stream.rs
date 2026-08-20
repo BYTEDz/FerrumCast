@@ -7,7 +7,7 @@ use gst::prelude::*;
 use gstreamer as gst;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 use tracing::info;
 
@@ -19,7 +19,7 @@ pub struct StreamManager {
     active_encoder: Mutex<String>,
     platform: Arc<dyn PlatformBackend>,
     outbound_tx: tokio::sync::broadcast::Sender<crate::ipc::OutboundMessage>,
-    profiler_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+    profiler_shutdown: Arc<AtomicBool>,
 }
 
 impl StreamManager {
@@ -42,21 +42,23 @@ impl StreamManager {
 
         platform.post_pipeline_start(&pipeline)?;
 
+        let profiler_shutdown = Arc::new(AtomicBool::new(false));
+
         let manager = Self {
             pipeline: Mutex::new(pipeline),
             active_encoder: Mutex::new(active_encoder),
             platform,
             outbound_tx,
-            profiler_handle: Mutex::new(None),
+            profiler_shutdown: profiler_shutdown.clone(),
         };
 
-        manager.attach_detailed_probes(&manager.pipeline.lock());
+        manager.attach_detailed_probes(&manager.pipeline.lock(), profiler_shutdown);
         manager.spawn_bus_listener(&manager.pipeline.lock());
 
         Ok(manager)
     }
 
-    fn attach_detailed_probes(&self, pipeline: &gst::Pipeline) {
+    fn attach_detailed_probes(&self, pipeline: &gst::Pipeline, shutdown: Arc<AtomicBool>) {
         let cap_count = Arc::new(AtomicU32::new(0));
         let enc_in_count = Arc::new(AtomicU32::new(0));
         let enc_out_count = Arc::new(AtomicU32::new(0));
@@ -64,7 +66,6 @@ impl StreamManager {
         let p_count = Arc::new(AtomicU32::new(0));
         let bytes_sent = Arc::new(AtomicU64::new(0));
 
-        // 1. Probe Screen Capture Source Output
         if let Some(src) = pipeline
             .by_name("pipewiresrc0")
             .or_else(|| pipeline.by_name("gdi_src"))
@@ -78,7 +79,6 @@ impl StreamManager {
             }
         }
 
-        // 2. Probe Video Encoder Input & Output
         if let Some(enc) = pipeline.by_name("video_encoder") {
             if let Some(sink_pad) = enc.sink_pads().first() {
                 let count = enc_in_count.clone();
@@ -116,10 +116,13 @@ impl StreamManager {
         let c_p = p_count;
         let c_bytes = bytes_sent;
 
-        let handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let mut last_check = Instant::now();
-            loop {
+            while !shutdown.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_secs(1));
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
                 let elapsed = last_check.elapsed().as_secs_f64();
                 last_check = Instant::now();
 
@@ -137,8 +140,6 @@ impl StreamManager {
                 );
             }
         });
-
-        *self.profiler_handle.lock() = Some(handle);
     }
 
     fn spawn_bus_listener(&self, pipeline: &gst::Pipeline) {
@@ -201,6 +202,8 @@ impl StreamManager {
 
     pub fn restart_pipeline(&self, pipeline_str: &str) -> Result<()> {
         info!("{}", loc::MSG_PIPELINE_RESTARTING);
+        self.profiler_shutdown.store(true, Ordering::Relaxed);
+
         let mut pipeline = self.pipeline.lock();
 
         self.platform.pre_pipeline_stop();
@@ -221,7 +224,8 @@ impl StreamManager {
         new_pipeline.set_state(gst::State::Playing)?;
         *pipeline = new_pipeline;
 
-        self.attach_detailed_probes(&pipeline);
+        self.profiler_shutdown.store(false, Ordering::Relaxed);
+        self.attach_detailed_probes(&pipeline, self.profiler_shutdown.clone());
         self.spawn_bus_listener(&pipeline);
 
         info!("{}", loc::MSG_PIPELINE_RESTARTED);
@@ -261,6 +265,7 @@ impl StreamManager {
     }
 
     pub fn stop(&self) -> Result<()> {
+        self.profiler_shutdown.store(true, Ordering::Relaxed);
         let pipeline = self.pipeline.lock();
         self.platform.pre_pipeline_stop();
         let _ = pipeline.set_state(gst::State::Null);

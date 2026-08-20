@@ -36,3 +36,5 @@ pub const MSG_ENV_DETECTED_X11: &str = "display_env_detected_x11";
 pub const MSG_ENV_DETECTED_HEADLESS: &str = "display_env_detected_headless";
 pub const MSG_ENV_DETECTED_D3D11: &str = "display_env_detected_d3d11";
 pub const MSG_ENV_DETECTED_GDI_FALLBACK: &str = "display_env_detected_gdi_fallback";
+pub const MSG_PROBE_ENCODER_VERIFIED: &str = "probe_encoder_verified";
+pub const MSG_PROBE_ENCODER_FAILED: &str = "probe_encoder_failed";

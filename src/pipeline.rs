@@ -75,7 +75,7 @@ impl PipelineBuilder {
         }
 
         let is_hw = enc.is_hardware();
-        let video_desc = platform.build_video_source(cfg, enc.is_gpu_asic());
+        let video_desc = platform.build_video_source(cfg, enc);
 
         let base_caps = generic::scale_caps(
             cfg,

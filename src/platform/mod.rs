@@ -10,6 +10,7 @@ use tokio::sync::broadcast::Sender;
 use crate::config::StreamConfig;
 use crate::input::MouseInput;
 use crate::ipc::OutboundMessage;
+use crate::pipeline::encoders::VideoEncoder;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -39,7 +40,7 @@ pub trait PlatformBackend: Send + Sync {
     fn build_video_source(
         &self,
         cfg: &StreamConfig,
-        is_hardware_encoder: bool,
+        encoder: &dyn VideoEncoder,
     ) -> VideoSourceDescriptor;
     fn build_audio_source(&self, cfg: &StreamConfig) -> String;
     fn handle_mouse_input(&self, input: &MouseInput);

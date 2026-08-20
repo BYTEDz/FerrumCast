@@ -9,12 +9,13 @@ use anyhow::Result;
 use gstreamer as gst;
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::config::StreamConfig;
 use crate::input::MouseInput;
 use crate::ipc::OutboundMessage;
 use crate::loc;
+use crate::pipeline::encoders::VideoEncoder;
 use crate::platform::{DisplayServer, PlatformBackend, VideoSourceDescriptor};
 use display::LinuxDisplayEnvironment;
 
@@ -47,7 +48,7 @@ impl LinuxBackend {
             let capture_result = match capture_result {
                 Ok(c) => Ok(c),
                 Err(ref e) if had_token => {
-                    error!(
+                    warn!(
                         "{}: {}. Purging cached token and requesting fresh permission.",
                         loc::MSG_SAVED_TOKEN_INVALID,
                         e
@@ -65,7 +66,12 @@ impl LinuxBackend {
                         if let Some(parent) = token_path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        let _ = std::fs::write(&token_path, t.trim());
+                        // Write and sync new single-use token immediately
+                        let _ = std::fs::write(&token_path, t);
+                        let _ = outbound_tx
+                            .send(OutboundMessage::PortalTokenGenerated { token: t.clone() });
+                        // Explicit stdout log for server synchronization
+                        println!("PORTAL_TOKEN_SAVED: {}", t);
                     }
                     Some(Arc::new(c))
                 }
@@ -106,12 +112,9 @@ impl PlatformBackend for LinuxBackend {
     fn build_video_source(
         &self,
         cfg: &StreamConfig,
-        _is_hardware_encoder: bool,
+        encoder: &dyn VideoEncoder,
     ) -> VideoSourceDescriptor {
-        let is_nvenc = matches!(
-            cfg.encoder,
-            crate::config::EncoderChoice::Nvenc | crate::config::EncoderChoice::NvencH265
-        );
+        let is_nvenc = encoder.is_nvenc();
 
         let (preferred_converter, preferred_memory_feature) = if is_nvenc {
             (

@@ -19,6 +19,7 @@ use tracing::info;
 use crate::config::StreamConfig;
 use crate::input::MouseInput;
 use crate::loc;
+use crate::pipeline::encoders::VideoEncoder;
 use crate::platform::{DisplayServer, PlatformBackend, VideoSourceDescriptor};
 use display::WindowsDisplayEnvironment;
 
@@ -43,9 +44,9 @@ impl PlatformBackend for WindowsBackend {
     fn build_video_source(
         &self,
         cfg: &StreamConfig,
-        is_hardware_encoder: bool,
+        encoder: &dyn VideoEncoder,
     ) -> VideoSourceDescriptor {
-        let env = WindowsDisplayEnvironment::probe(cfg.gdi, is_hardware_encoder);
+        let env = WindowsDisplayEnvironment::probe(cfg.gdi, encoder.is_gpu_asic());
 
         match env {
             WindowsDisplayEnvironment::GdiRequired => VideoSourceDescriptor {
@@ -55,7 +56,7 @@ impl PlatformBackend for WindowsBackend {
                 raw_caps_filter: None,
             },
             WindowsDisplayEnvironment::Direct3D11 => {
-                if is_hardware_encoder {
+                if encoder.is_d3d11_native() {
                     VideoSourceDescriptor {
                         pipeline_fragment: format!(
                             "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",

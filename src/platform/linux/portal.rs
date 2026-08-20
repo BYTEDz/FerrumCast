@@ -4,7 +4,8 @@
 
 use anyhow::{Result, anyhow};
 use ashpd::desktop::screencast::{
-    CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, StartCastOptions,
+    CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, SourceType,
+    StartCastOptions,
 };
 use ashpd::desktop::{CreateSessionOptions, PersistMode};
 use std::os::fd::IntoRawFd;
@@ -25,10 +26,15 @@ pub async fn request_screencast(
     restore_token: Option<String>,
     tx: Option<Sender<OutboundMessage>>,
 ) -> Result<PortalCapture> {
+    let clean_token = restore_token
+        .as_ref()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+
     info!(
         "{}: restore_token={:?}",
         loc::MSG_PORTAL_REQUESTING,
-        restore_token
+        clean_token
     );
 
     let screencast_proxy = Screencast::new().await?;
@@ -36,17 +42,20 @@ pub async fn request_screencast(
         .create_session(CreateSessionOptions::default())
         .await?;
 
+    // Crucial: set_sources(Monitor | Window) allows the portal to restore monitor selection without prompting
     screencast_proxy
         .select_sources(
             &screencast_session,
             SelectSourcesOptions::default()
                 .set_cursor_mode(Some(CursorMode::Embedded))
-                .set_restore_token(restore_token.as_deref())
+                .set_sources(SourceType::Monitor | SourceType::Window)
+                .set_multiple(false)
+                .set_restore_token(clean_token.as_deref())
                 .set_persist_mode(Some(PersistMode::ExplicitlyRevoked)),
         )
         .await?;
 
-    if restore_token.is_none() {
+    if clean_token.is_none() {
         if let Some(ref tx) = tx {
             let _ = tx.send(OutboundMessage::WaitingForPortalApproval);
         }
@@ -56,7 +65,11 @@ pub async fn request_screencast(
         .start(&screencast_session, None, StartCastOptions::default())
         .await?
         .response()?;
-    let new_token = response.restore_token().map(|t| t.to_string());
+
+    let new_token = response
+        .restore_token()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
 
     let stream = response
         .streams()
