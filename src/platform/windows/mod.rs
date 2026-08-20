@@ -8,6 +8,7 @@ pub mod input;
 
 use anyhow::Result;
 use gstreamer as gst;
+use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use parking_lot::Mutex;
 use std::sync::{
@@ -76,10 +77,9 @@ impl PlatformBackend for WindowsBackend {
                         ),
                         preferred_memory_feature: None,
                         preferred_converter: "d3d11convert ! d3d11download ! videoconvert n-threads=0".to_string(),
-                        raw_caps_filter: Some("video/x-raw,format=NV12 ! ".to_string()),
+                        raw_caps_filter: None,
                     }
                 } else {
-                    let target_format = "NV12";
                     VideoSourceDescriptor {
                         pipeline_fragment: format!(
                             "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
@@ -88,7 +88,7 @@ impl PlatformBackend for WindowsBackend {
                         ),
                         preferred_memory_feature: None,
                         preferred_converter: "d3d11convert ! d3d11download ! videoconvert n-threads=0".to_string(),
-                        raw_caps_filter: Some(format!("video/x-raw,format={} ! ", target_format)),
+                        raw_caps_filter: None,
                     }
                 }
             }

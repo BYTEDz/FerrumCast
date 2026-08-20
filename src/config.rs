@@ -273,7 +273,7 @@ fn verify_encoder(element: &str) -> bool {
     let success = match res {
         Ok(gst::StateChangeSuccess::Success) => true,
         Ok(gst::StateChangeSuccess::Async) => {
-            let (state_res, _, _) = pipeline.state(Some(gst::ClockTime::from_mseconds(150)));
+            let (state_res, _, _) = pipeline.state(Some(gst::ClockTime::from_mseconds(500)));
             state_res.is_ok()
         }
         _ => false,
