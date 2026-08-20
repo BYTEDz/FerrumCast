@@ -32,6 +32,9 @@ pub trait VideoEncoder: Send + Sync {
     fn is_vaapi_native(&self) -> bool {
         false
     }
+    fn is_zero_latency_capable(&self) -> bool {
+        true
+    }
 }
 
 pub struct D3d11H264Encoder;
@@ -163,7 +166,7 @@ impl VideoEncoder for X265Encoder {
         if is_cqp {
             format!(
                 "speed-preset={preset} tune=zerolatency key-int-max={key_int} \
-                option-string=qp={cqp}:bframes=0:repeat-headers=1",
+                option-string=qp={cqp}:bframes=0:repeat-headers=1:no-open-gop=1:rc-lookahead=0",
                 preset = cfg.speed_preset,
                 key_int = key_int,
                 cqp = cfg.cqp_value,
@@ -171,7 +174,7 @@ impl VideoEncoder for X265Encoder {
         } else {
             format!(
                 "bitrate={bitrate} speed-preset={preset} tune=zerolatency key-int-max={key_int} \
-                option-string=bframes=0:repeat-headers=1",
+                option-string=bframes=0:repeat-headers=1:no-open-gop=1:rc-lookahead=0",
                 bitrate = bitrate,
                 preset = cfg.speed_preset,
                 key_int = key_int,
@@ -184,6 +187,10 @@ impl VideoEncoder for X265Encoder {
     }
 
     fn is_hardware(&self) -> bool {
+        false
+    }
+
+    fn is_zero_latency_capable(&self) -> bool {
         false
     }
 }
@@ -223,6 +230,10 @@ impl VideoEncoder for VaH264Encoder {
 
     fn is_vaapi_native(&self) -> bool {
         true
+    }
+
+    fn is_zero_latency_capable(&self) -> bool {
+        false
     }
 }
 
@@ -616,23 +627,23 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
 
             #[cfg(target_os = "linux")]
             {
-                if has("vah264") {
-                    return Box::new(VaH264Encoder);
-                }
-                if has("nvenc") {
-                    return Box::new(NvencEncoder);
-                }
-                if has("intel_qsv") {
-                    return Box::new(QsvEncoder);
-                }
                 if has("vah265") {
                     return Box::new(VaH265Encoder);
+                }
+                if has("vah264") {
+                    return Box::new(VaH264Encoder);
                 }
                 if has("nvenc_h265") {
                     return Box::new(NvencH265Encoder);
                 }
+                if has("nvenc") {
+                    return Box::new(NvencEncoder);
+                }
                 if has("intel_qsv_h265") {
                     return Box::new(QsvH265Encoder);
+                }
+                if has("intel_qsv") {
+                    return Box::new(QsvEncoder);
                 }
             }
 
@@ -670,6 +681,9 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
 
             #[cfg(target_os = "linux")]
             {
+                if has("vah265") {
+                    return Box::new(VaH265Encoder);
+                }
                 if has("vah264") {
                     return Box::new(VaH264Encoder);
                 }

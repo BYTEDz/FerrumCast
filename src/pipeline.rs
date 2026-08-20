@@ -90,8 +90,16 @@ impl PipelineBuilder {
             base_caps
         };
 
-        let qbufs = cfg.queue_max_buffers;
-        let qtime = cfg.queue_max_time_ns;
+        let (qbufs, qtime, leaky) = if enc.is_zero_latency_capable() {
+            (
+                cfg.queue_max_buffers.max(1),
+                cfg.queue_max_time_ns,
+                "leaky=downstream",
+            )
+        } else {
+            (3u32, 33_000_000u64, "")
+        };
+
         let codec = enc.codec_name();
 
         let mut video = if codec == "h265" {
@@ -99,7 +107,7 @@ impl PipelineBuilder {
                 "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
                 video/x-h265 ! h265parse config-interval=-1 disable-passthrough=true ! \
                 video/x-h265,stream-format=byte-stream,alignment=au ! \
-                queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
+                queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} {leaky} ! \
                 rtph265pay mtu={mtu} config-interval=1 pt=96 aggregate-mode=none",
                 video_src = video_desc.pipeline_fragment,
                 converter = video_desc.preferred_converter,
@@ -108,6 +116,7 @@ impl PipelineBuilder {
                 enc_params = enc.encode_params(cfg),
                 qbufs = qbufs,
                 qtime = qtime,
+                leaky = leaky,
                 mtu = cfg.rtp_mtu,
             )
         } else {
@@ -115,7 +124,7 @@ impl PipelineBuilder {
                 "{video_src} ! {converter} ! {caps}{enc_element} name=video_encoder {enc_params} ! \
                 video/x-h264 ! h264parse config-interval=-1 disable-passthrough=true ! \
                 video/x-h264,stream-format=byte-stream,alignment=au ! \
-                queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} ! \
+                queue max-size-buffers={qbufs} max-size-bytes=0 max-size-time={qtime} {leaky} ! \
                 rtph264pay mtu={mtu} config-interval=1 pt=96 aggregate-mode=none",
                 video_src = video_desc.pipeline_fragment,
                 converter = video_desc.preferred_converter,
@@ -124,6 +133,7 @@ impl PipelineBuilder {
                 enc_params = enc.encode_params(cfg),
                 qbufs = qbufs,
                 qtime = qtime,
+                leaky = leaky,
                 mtu = cfg.rtp_mtu,
             )
         };

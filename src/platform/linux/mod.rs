@@ -123,18 +123,24 @@ impl PlatformBackend for LinuxBackend {
             ("videoconvert n-threads=0".to_string(), None)
         };
 
+        let queue_cap = if encoder.is_zero_latency_capable() {
+            "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream"
+        } else {
+            "queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000"
+        };
+
         let pipeline_fragment = if let Some(ref portal) = self.portal_capture {
             format!(
-                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
-                portal.fd, portal.node_id
+                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! {}",
+                portal.fd, portal.node_id, queue_cap
             )
         } else if self.display_env == LinuxDisplayEnvironment::Wayland {
-            "videotestsrc is-live=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream"
-                .to_string()
+            format!("videotestsrc is-live=true ! {}", queue_cap)
         } else {
             format!(
-                "ximagesrc use-damage=true show-pointer={} do-timestamp=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
-                if cfg.show_cursor { "true" } else { "false" }
+                "ximagesrc use-damage=true show-pointer={} do-timestamp=true ! {}",
+                if cfg.show_cursor { "true" } else { "false" },
+                queue_cap
             )
         };
 
@@ -145,6 +151,7 @@ impl PlatformBackend for LinuxBackend {
             raw_caps_filter: None,
         }
     }
+
     fn build_audio_source(&self, _cfg: &StreamConfig) -> String {
         "pulsesrc buffer-time=10000 latency-time=10000".to_string()
     }
