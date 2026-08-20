@@ -15,12 +15,10 @@ pub fn scale_caps(
 
     let has_target_res = cfg.width.map_or(false, |w| w > 0) || cfg.height.map_or(false, |h| h > 0);
 
-    // If target width/height are specified, insert videoscale so the source resolution is scaled
     if has_target_res && mem_feature.is_none() {
         pre_elements.push_str("videoscale ! ");
     }
 
-    // videorate generates constant 60 FPS pacing from Wayland damage updates
     if cfg.framerate.map_or(false, |f| f > 0) && mem_feature.is_none() {
         pre_elements.push_str("videorate ! ");
     }

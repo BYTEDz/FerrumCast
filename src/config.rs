@@ -15,6 +15,8 @@ use crate::loc;
 pub enum EncoderChoice {
     #[default]
     Auto,
+    D3d11H264,
+    D3d11H265,
     X264,
     X265,
     VaH264,
@@ -36,13 +38,13 @@ fn default_tune() -> String {
     "zerolatency".to_string()
 }
 fn default_nvenc_preset() -> String {
-    "p4".to_string()
+    "p1".to_string()
 }
 fn default_nvenc_tune() -> String {
     "ultra-low-latency".to_string()
 }
 fn default_vaapi_target_usage() -> u32 {
-    4
+    7
 }
 fn default_qsv_target_usage() -> u32 {
     7
@@ -66,10 +68,10 @@ fn default_rtp_mtu() -> u32 {
     1200
 }
 fn default_queue_max_time_ns() -> u64 {
-    33_000_000
+    0
 }
 fn default_queue_max_buffers() -> u32 {
-    3
+    1
 }
 fn default_aggregate_mode() -> String {
     "none".to_string()
@@ -224,10 +226,10 @@ pub struct Capabilities {
 
 #[cfg(target_os = "linux")]
 const CANDIDATES: &[(&str, &str)] = &[
-    ("nvh265enc", "nvenc_h265"),
-    ("nvh264enc", "nvenc"),
     ("vah265enc", "vah265"),
     ("vah264enc", "vah264"),
+    ("nvh265enc", "nvenc_h265"),
+    ("nvh264enc", "nvenc"),
     ("qsvh265enc", "intel_qsv_h265"),
     ("qsvh264enc", "intel_qsv"),
     ("x265enc", "x265"),
@@ -236,6 +238,8 @@ const CANDIDATES: &[(&str, &str)] = &[
 
 #[cfg(target_os = "windows")]
 const CANDIDATES: &[(&str, &str)] = &[
+    ("d3d11h265enc", "d3d11h265"),
+    ("d3d11h264enc", "d3d11h264"),
     ("nvh265enc", "nvenc_h265"),
     ("nvh264enc", "nvenc"),
     ("amfh265enc", "amd_amf_h265"),
@@ -325,6 +329,8 @@ impl ConfigStore {
                 "--encoder" => {
                     if let Some(val) = args.next() {
                         cfg.encoder = match val.to_lowercase().as_str() {
+                            "d3d11h265" | "d3d11_h265" => EncoderChoice::D3d11H265,
+                            "d3d11h264" | "d3d11" | "d3d11_h264" => EncoderChoice::D3d11H264,
                             "nvenc_h265" | "nvenc-h265" | "nvenc265" => EncoderChoice::NvencH265,
                             "nvenc" => EncoderChoice::Nvenc,
                             "windows_mf_h265" | "mf_h265" | "mf265" => EncoderChoice::MfH265,

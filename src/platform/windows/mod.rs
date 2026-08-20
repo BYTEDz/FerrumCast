@@ -50,7 +50,7 @@ impl PlatformBackend for WindowsBackend {
 
         match env {
             WindowsDisplayEnvironment::GdiRequired => VideoSourceDescriptor {
-                pipeline_fragment: "appsrc name=gdi_src format=time is-live=true do-timestamp=true block=false max-bytes=20000000 ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream".to_string(),
+                pipeline_fragment: "appsrc name=gdi_src format=time is-live=true do-timestamp=true block=false max-bytes=20000000 ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream".to_string(),
                 preferred_memory_feature: None,
                 preferred_converter: "videoconvert n-threads=0".to_string(),
                 raw_caps_filter: None,
@@ -59,7 +59,7 @@ impl PlatformBackend for WindowsBackend {
                 if encoder.is_d3d11_native() {
                     VideoSourceDescriptor {
                         pipeline_fragment: format!(
-                            "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",
+                            "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
                             if cfg.show_cursor { "true" } else { "false" },
                             cfg.monitor_index
                         ),
@@ -67,11 +67,22 @@ impl PlatformBackend for WindowsBackend {
                         preferred_converter: "d3d11convert".to_string(),
                         raw_caps_filter: None,
                     }
+                } else if encoder.is_nvenc() {
+                    VideoSourceDescriptor {
+                        pipeline_fragment: format!(
+                            "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
+                            if cfg.show_cursor { "true" } else { "false" },
+                            cfg.monitor_index
+                        ),
+                        preferred_memory_feature: None,
+                        preferred_converter: "d3d11convert ! d3d11download ! videoconvert n-threads=0".to_string(),
+                        raw_caps_filter: Some("video/x-raw,format=NV12 ! ".to_string()),
+                    }
                 } else {
                     let target_format = "NV12";
                     VideoSourceDescriptor {
                         pipeline_fragment: format!(
-                            "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",
+                            "d3d11screencapturesrc show-cursor={} monitor-index={} ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
                             if cfg.show_cursor { "true" } else { "false" },
                             cfg.monitor_index
                         ),

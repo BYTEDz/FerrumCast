@@ -66,11 +66,9 @@ impl LinuxBackend {
                         if let Some(parent) = token_path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        // Write and sync new single-use token immediately
                         let _ = std::fs::write(&token_path, t);
                         let _ = outbound_tx
                             .send(OutboundMessage::PortalTokenGenerated { token: t.clone() });
-                        // Explicit stdout log for server synchronization
                         println!("PORTAL_TOKEN_SAVED: {}", t);
                     }
                     Some(Arc::new(c))
@@ -127,15 +125,15 @@ impl PlatformBackend for LinuxBackend {
 
         let pipeline_fragment = if let Some(ref portal) = self.portal_capture {
             format!(
-                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",
+                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
                 portal.fd, portal.node_id
             )
         } else if self.display_env == LinuxDisplayEnvironment::Wayland {
-            "videotestsrc is-live=true ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream"
+            "videotestsrc is-live=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream"
                 .to_string()
         } else {
             format!(
-                "ximagesrc use-damage=true show-pointer={} do-timestamp=true ! queue max-size-buffers=3 max-size-bytes=0 max-size-time=33000000 leaky=downstream",
+                "ximagesrc use-damage=true show-pointer={} do-timestamp=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream",
                 if cfg.show_cursor { "true" } else { "false" }
             )
         };
@@ -147,7 +145,6 @@ impl PlatformBackend for LinuxBackend {
             raw_caps_filter: None,
         }
     }
-
     fn build_audio_source(&self, _cfg: &StreamConfig) -> String {
         "pulsesrc buffer-time=10000 latency-time=10000".to_string()
     }

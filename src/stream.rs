@@ -66,10 +66,13 @@ impl StreamManager {
         let p_count = Arc::new(AtomicU32::new(0));
         let bytes_sent = Arc::new(AtomicU64::new(0));
 
-        if let Some(src) = pipeline
-            .by_name("pipewiresrc0")
+        let capture_src = pipeline
+            .by_name("d3d11screencapturesrc0")
+            .or_else(|| pipeline.by_name("pipewiresrc0"))
             .or_else(|| pipeline.by_name("gdi_src"))
-        {
+            .or_else(|| pipeline.by_name("ximagesrc0"));
+
+        if let Some(src) = capture_src {
             if let Some(src_pad) = src.src_pads().first() {
                 let count = cap_count.clone();
                 src_pad.add_probe(gst::PadProbeType::BUFFER, move |_, _| {

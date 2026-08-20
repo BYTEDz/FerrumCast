@@ -28,6 +28,74 @@ pub trait VideoEncoder: Send + Sync {
     fn is_d3d11_native(&self) -> bool {
         false
     }
+    #[allow(dead_code)]
+    fn is_vaapi_native(&self) -> bool {
+        false
+    }
+}
+
+pub struct D3d11H264Encoder;
+impl VideoEncoder for D3d11H264Encoder {
+    fn gst_element(&self) -> &'static str {
+        "d3d11h264enc"
+    }
+
+    fn encode_params(&self, cfg: &StreamConfig) -> String {
+        let bitrate = cfg.bitrate;
+        let key_int = cfg.key_int_max;
+        let is_cqp = cfg.rc_mode == "cqp";
+        let rc = if is_cqp { "cqp" } else { cfg.rc_mode.as_str() };
+
+        format!(
+            "bitrate={bitrate} rate-control={rc} gop-size={key_int} b-frames=0 \
+            low-latency=true async-depth=1",
+            bitrate = bitrate,
+            rc = rc,
+            key_int = key_int,
+        )
+    }
+
+    fn is_gpu_asic(&self) -> bool {
+        true
+    }
+
+    fn is_d3d11_native(&self) -> bool {
+        true
+    }
+}
+
+pub struct D3d11H265Encoder;
+impl VideoEncoder for D3d11H265Encoder {
+    fn gst_element(&self) -> &'static str {
+        "d3d11h265enc"
+    }
+
+    fn codec_name(&self) -> &'static str {
+        "h265"
+    }
+
+    fn encode_params(&self, cfg: &StreamConfig) -> String {
+        let bitrate = cfg.bitrate;
+        let key_int = cfg.key_int_max;
+        let is_cqp = cfg.rc_mode == "cqp";
+        let rc = if is_cqp { "cqp" } else { cfg.rc_mode.as_str() };
+
+        format!(
+            "bitrate={bitrate} rate-control={rc} gop-size={key_int} b-frames=0 \
+            low-latency=true async-depth=1",
+            bitrate = bitrate,
+            rc = rc,
+            key_int = key_int,
+        )
+    }
+
+    fn is_gpu_asic(&self) -> bool {
+        true
+    }
+
+    fn is_d3d11_native(&self) -> bool {
+        true
+    }
 }
 
 pub struct X264Encoder;
@@ -152,6 +220,10 @@ impl VideoEncoder for VaH264Encoder {
     fn is_gpu_asic(&self) -> bool {
         true
     }
+
+    fn is_vaapi_native(&self) -> bool {
+        true
+    }
 }
 
 pub struct VaH265Encoder;
@@ -191,6 +263,10 @@ impl VideoEncoder for VaH265Encoder {
     }
 
     fn is_gpu_asic(&self) -> bool {
+        true
+    }
+
+    fn is_vaapi_native(&self) -> bool {
         true
     }
 }
@@ -489,6 +565,8 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
     let has = |label: &str| caps.encoders.iter().any(|e| e == label);
 
     match choice {
+        EncoderChoice::D3d11H265 if has("d3d11h265") => Box::new(D3d11H265Encoder),
+        EncoderChoice::D3d11H264 if has("d3d11h264") => Box::new(D3d11H264Encoder),
         EncoderChoice::NvencH265 if has("nvenc_h265") => Box::new(NvencH265Encoder),
         EncoderChoice::Nvenc if has("nvenc") => Box::new(NvencEncoder),
         EncoderChoice::MfH265 if has("windows_mf_h265") => Box::new(MfH265Encoder),
@@ -502,49 +580,62 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
         EncoderChoice::X265 if has("x265") => Box::new(X265Encoder),
         EncoderChoice::X264 if has("x264") => Box::new(X264Encoder),
         EncoderChoice::Auto => {
-            // Prioritize H.264 hardware encoders for universal baseline compatibility
-            if has("nvenc") {
-                return Box::new(NvencEncoder);
-            }
-            if has("vah264") {
-                return Box::new(VaH264Encoder);
-            }
-            if has("amd_amf") {
-                return Box::new(AmfEncoder);
-            }
-            if has("intel_qsv") {
-                return Box::new(QsvEncoder);
-            }
-
             #[cfg(target_os = "windows")]
             {
+                if has("d3d11h264") {
+                    return Box::new(D3d11H264Encoder);
+                }
+                if has("nvenc") {
+                    return Box::new(NvencEncoder);
+                }
+                if has("amd_amf") {
+                    return Box::new(AmfEncoder);
+                }
+                if has("intel_qsv") {
+                    return Box::new(QsvEncoder);
+                }
                 if has("windows_mf") {
                     return Box::new(MfEncoder);
                 }
-            }
-
-            // H.265 hardware encoders
-            if has("nvenc_h265") {
-                return Box::new(NvencH265Encoder);
-            }
-            if has("vah265") {
-                return Box::new(VaH265Encoder);
-            }
-            if has("amd_amf_h265") {
-                return Box::new(AmfH265Encoder);
-            }
-            if has("intel_qsv_h265") {
-                return Box::new(QsvH265Encoder);
-            }
-
-            #[cfg(target_os = "windows")]
-            {
+                if has("d3d11h265") {
+                    return Box::new(D3d11H265Encoder);
+                }
+                if has("nvenc_h265") {
+                    return Box::new(NvencH265Encoder);
+                }
+                if has("amd_amf_h265") {
+                    return Box::new(AmfH265Encoder);
+                }
+                if has("intel_qsv_h265") {
+                    return Box::new(QsvH265Encoder);
+                }
                 if has("windows_mf_h265") {
                     return Box::new(MfH265Encoder);
                 }
             }
 
-            // Software fallbacks
+            #[cfg(target_os = "linux")]
+            {
+                if has("vah264") {
+                    return Box::new(VaH264Encoder);
+                }
+                if has("nvenc") {
+                    return Box::new(NvencEncoder);
+                }
+                if has("intel_qsv") {
+                    return Box::new(QsvEncoder);
+                }
+                if has("vah265") {
+                    return Box::new(VaH265Encoder);
+                }
+                if has("nvenc_h265") {
+                    return Box::new(NvencH265Encoder);
+                }
+                if has("intel_qsv_h265") {
+                    return Box::new(QsvH265Encoder);
+                }
+            }
+
             if has("x264") {
                 return Box::new(X264Encoder);
             }
@@ -558,43 +649,35 @@ pub fn resolve_encoder(choice: &EncoderChoice, caps: &Capabilities) -> Box<dyn V
             tracing::warn!(
                 "Requested encoder not available, falling back to verified capability list"
             );
-            if has("nvenc") {
-                return Box::new(NvencEncoder);
-            }
-            if has("vah264") {
-                return Box::new(VaH264Encoder);
-            }
-            if has("amd_amf") {
-                return Box::new(AmfEncoder);
-            }
-            if has("intel_qsv") {
-                return Box::new(QsvEncoder);
-            }
-
             #[cfg(target_os = "windows")]
             {
+                if has("d3d11h264") {
+                    return Box::new(D3d11H264Encoder);
+                }
+                if has("nvenc") {
+                    return Box::new(NvencEncoder);
+                }
+                if has("amd_amf") {
+                    return Box::new(AmfEncoder);
+                }
+                if has("intel_qsv") {
+                    return Box::new(QsvEncoder);
+                }
                 if has("windows_mf") {
                     return Box::new(MfEncoder);
                 }
             }
 
-            if has("nvenc_h265") {
-                return Box::new(NvencH265Encoder);
-            }
-            if has("vah265") {
-                return Box::new(VaH265Encoder);
-            }
-            if has("amd_amf_h265") {
-                return Box::new(AmfH265Encoder);
-            }
-            if has("intel_qsv_h265") {
-                return Box::new(QsvH265Encoder);
-            }
-
-            #[cfg(target_os = "windows")]
+            #[cfg(target_os = "linux")]
             {
-                if has("windows_mf_h265") {
-                    return Box::new(MfH265Encoder);
+                if has("vah264") {
+                    return Box::new(VaH264Encoder);
+                }
+                if has("nvenc") {
+                    return Box::new(NvencEncoder);
+                }
+                if has("intel_qsv") {
+                    return Box::new(QsvEncoder);
                 }
             }
 
