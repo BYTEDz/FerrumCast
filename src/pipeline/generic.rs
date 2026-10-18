@@ -16,11 +16,12 @@ pub fn scale_caps(
     let has_target_res = cfg.width.map_or(false, |w| w > 0) || cfg.height.map_or(false, |h| h > 0);
 
     if has_target_res && mem_feature.is_none() {
-        pre_elements.push_str("videoscale ! ");
+        pre_elements.push_str("videoscale add-borders=false ! ");
     }
 
     if cfg.framerate.map_or(false, |f| f > 0) && mem_feature.is_none() {
-        pre_elements.push_str("videorate ! ");
+        // drop-only=true prevents duplicating stale frames on timestamp jitter
+        pre_elements.push_str("videorate drop-only=true ! ");
     }
 
     if let Some(fps) = cfg.framerate {
@@ -41,10 +42,11 @@ pub fn scale_caps(
         }
     }
 
+    // Default to NV12 for both HW and SW encoders to match modern GPU/Wayland bi-planar memory
     let format_str = if is_hw {
         format.unwrap_or("NV12")
     } else {
-        format.unwrap_or("I420")
+        format.unwrap_or("NV12")
     };
 
     parts.push(format!("format={}", format_str));
