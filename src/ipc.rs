@@ -17,6 +17,7 @@ use tracing::{error, info, warn};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ControlMessage {
+    StartStream(Option<StreamConfig>),
     StopStream,
     ConfigureStream(StreamConfig),
     GetCapabilities,

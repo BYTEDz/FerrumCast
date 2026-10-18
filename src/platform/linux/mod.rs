@@ -131,7 +131,7 @@ impl PlatformBackend for LinuxBackend {
 
         let pipeline_fragment = if let Some(ref portal) = self.portal_capture {
             format!(
-                "pipewiresrc fd={} path={} do-timestamp=true always-copy=false ! {}",
+                "pipewiresrc fd={} path={} do-timestamp=true always-copy=true keepalive-time=1000 ! {}",
                 portal.fd, portal.node_id, queue_cap
             )
         } else if self.display_env == LinuxDisplayEnvironment::Wayland {

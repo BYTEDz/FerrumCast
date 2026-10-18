@@ -5,10 +5,11 @@
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::loc;
+use crate::platform::GpuQuirks;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -179,6 +180,9 @@ pub struct StreamConfig {
 
     #[serde(default)]
     pub srtp_key: Option<String>,
+
+    #[serde(default)]
+    pub allow_unstable_vce: bool,
 }
 
 impl Default for StreamConfig {
@@ -215,6 +219,7 @@ impl Default for StreamConfig {
             show_cursor: default_show_cursor(),
             colorimetry: default_colorimetry(),
             srtp_key: None,
+            allow_unstable_vce: false,
         }
     }
 }
@@ -226,44 +231,43 @@ pub struct Capabilities {
 
 #[cfg(target_os = "linux")]
 const CANDIDATES: &[(&str, &str)] = &[
-    ("vah265enc", "vah265"),
     ("vah264enc", "vah264"),
-    ("nvh265enc", "nvenc_h265"),
+    ("vah265enc", "vah265"),
     ("nvh264enc", "nvenc"),
-    ("qsvh265enc", "intel_qsv_h265"),
+    ("nvh265enc", "nvenc_h265"),
     ("qsvh264enc", "intel_qsv"),
-    ("x265enc", "x265"),
+    ("qsvh265enc", "intel_qsv_h265"),
     ("x264enc", "x264"),
+    ("x265enc", "x265"),
 ];
 
 #[cfg(target_os = "windows")]
 const CANDIDATES: &[(&str, &str)] = &[
-    ("d3d11h265enc", "d3d11h265"),
     ("d3d11h264enc", "d3d11h264"),
-    ("nvh265enc", "nvenc_h265"),
+    ("d3d11h265enc", "d3d11h265"),
     ("nvh264enc", "nvenc"),
-    ("amfh265enc", "amd_amf_h265"),
+    ("nvh265enc", "nvenc_h265"),
     ("amfh264enc", "amd_amf"),
-    ("qsvh265enc", "intel_qsv_h265"),
+    ("amfh265enc", "amd_amf_h265"),
     ("qsvh264enc", "intel_qsv"),
-    ("mfh265enc", "windows_mf_h265"),
+    ("qsvh265enc", "intel_qsv_h265"),
     ("mfh264enc", "windows_mf"),
-    ("x265enc", "x265"),
+    ("mfh265enc", "windows_mf_h265"),
     ("x264enc", "x264"),
+    ("x265enc", "x265"),
 ];
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-const CANDIDATES: &[(&str, &str)] = &[("x265enc", "x265"), ("x264enc", "x264")];
+const CANDIDATES: &[(&str, &str)] = &[("x264enc", "x264"), ("x265enc", "x265")];
 
 fn verify_encoder(element: &str) -> bool {
-    // 1. Check if the element plugin is registered in GStreamer
     if gst::ElementFactory::find(element).is_none() {
         return false;
     }
 
-    // 2. Test instantiation and pipeline execution in Playing state
+    // Realistic probe: verify real frames and confirm clean End-Of-Stream (EOS)
     let pipeline_desc = format!(
-        "videotestsrc num-buffers=2 is-live=false ! videoconvert ! {} ! fakesink sync=false",
+        "videotestsrc num-buffers=3 is-live=false ! video/x-raw,format=NV12,width=1920,height=1080,framerate=60/1 ! {} ! fakesink sync=false",
         element
     );
 
@@ -277,19 +281,15 @@ fn verify_encoder(element: &str) -> bool {
 
     let res = pipeline.set_state(gst::State::Playing);
     let success = match res {
-        Ok(gst::StateChangeSuccess::Success) => true,
-        Ok(gst::StateChangeSuccess::Async) => {
-            let bus = pipeline.bus();
-            if let Some(bus) = bus {
-                // Wait for either an error or buffer flow
+        Ok(gst::StateChangeSuccess::Success) | Ok(gst::StateChangeSuccess::Async) => {
+            if let Some(bus) = pipeline.bus() {
                 let msg = bus.timed_pop_filtered(
-                    Some(gst::ClockTime::from_mseconds(500)),
+                    Some(gst::ClockTime::from_mseconds(1000)),
                     &[gst::MessageType::Error, gst::MessageType::Eos],
                 );
-                // If there's an error message on the bus, encoder failed
-                !matches!(msg.as_ref().map(|m| m.view()), Some(gst::MessageView::Error(_)))
+                matches!(msg.as_ref().map(|m| m.view()), Some(gst::MessageView::Eos(_)))
             } else {
-                true
+                false
             }
         }
         _ => false,
@@ -300,28 +300,26 @@ fn verify_encoder(element: &str) -> bool {
 }
 
 pub fn probe_capabilities() -> Capabilities {
-    let verified_encoders = Arc::new(Mutex::new(Vec::new()));
-
-    std::thread::scope(|s| {
-        for (element, label) in CANDIDATES {
-            let verified = Arc::clone(&verified_encoders);
-            s.spawn(move || {
-                if verify_encoder(element) {
-                    info!("{}: {}", loc::MSG_PROBE_ENCODER_VERIFIED, label);
-                    let mut lock = verified.lock().unwrap();
-                    lock.push((*label).to_string());
-                } else {
-                    warn!("{}: {}", loc::MSG_PROBE_ENCODER_FAILED, label);
-                }
-            });
-        }
-    });
-
-    let lock = verified_encoders.lock().unwrap();
+    let quirks = GpuQuirks::detect();
     let mut encoders = Vec::new();
-    for (_, label) in CANDIDATES {
-        if lock.contains(&label.to_string()) {
-            encoders.push(label.to_string());
+
+    // Probe sequentially to prevent concurrent GPU context race conditions
+    for (element, label) in CANDIDATES {
+        if quirks.is_encoder_unstable(label) {
+            info!(
+                "{}: {} ({})",
+                loc::MSG_PROBE_ENCODER_SKIPPED_UNSTABLE,
+                label,
+                quirks.summary()
+            );
+            continue;
+        }
+
+        if verify_encoder(element) {
+            info!("{}: {}", loc::MSG_PROBE_ENCODER_VERIFIED, label);
+            encoders.push((*label).to_string());
+        } else {
+            warn!("{}: {}", loc::MSG_PROBE_ENCODER_FAILED, label);
         }
     }
 
@@ -494,12 +492,15 @@ impl ConfigStore {
                         cfg.srtp_key = Some(val);
                     }
                 }
+                "--allow-unstable-vce" => {
+                    cfg.allow_unstable_vce = true;
+                }
                 _ => {}
             }
         }
         info!(
             "Pre-seeded config from args: encoder={:?} bitrate={} audio_bitrate={}kbps width={:?} height={:?} fps={:?} \
-            gdi={} monitor_index={} rc_mode={} key_int_max={} audio_only={}",
+            gdi={} monitor_index={} rc_mode={} key_int_max={} audio_only={} allow_unstable_vce={}",
             cfg.encoder,
             cfg.bitrate,
             cfg.audio_bitrate,
@@ -510,7 +511,8 @@ impl ConfigStore {
             cfg.monitor_index,
             cfg.rc_mode,
             cfg.key_int_max,
-            cfg.audio_only
+            cfg.audio_only,
+            cfg.allow_unstable_vce
         );
         Self(RwLock::new(cfg))
     }
@@ -532,13 +534,14 @@ impl ConfigStore {
         });
         *guard = cfg;
         info!(
-            "Stream config updated: bitrate={}kbps audio_bitrate={}kbps encoder={:?} rc_mode={} monitor_index={} audio_only={}",
+            "Stream config updated: bitrate={}kbps audio_bitrate={}kbps encoder={:?} rc_mode={} monitor_index={} audio_only={} allow_unstable_vce={}",
             guard.bitrate,
             guard.audio_bitrate,
             guard.encoder,
             guard.rc_mode,
             guard.monitor_index,
-            guard.audio_only
+            guard.audio_only,
+            guard.allow_unstable_vce
         );
     }
 }

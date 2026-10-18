@@ -14,8 +14,11 @@ use crate::pipeline::encoders::VideoEncoder;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
+pub mod quirks;
 #[cfg(target_os = "windows")]
 pub mod windows;
+
+pub use quirks::GpuQuirks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]

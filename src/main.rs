@@ -140,29 +140,30 @@ async fn main() -> Result<()> {
     info!("binding IPC to {}", ipc_path);
     let server = Arc::new(ipc::IpcServer::new(ipc_path));
 
-    let enc = pipeline::encoders::resolve_encoder(&initial_cfg.encoder, &caps);
-    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
-        &initial_cfg,
-        enc.as_ref(),
-        platform_backend.as_ref(),
-    );
-
-    info!("pipeline: {}", pipeline_str);
-
-    let stream_manager = match stream::StreamManager::new(
-        &pipeline_str,
+    let stream_manager = Arc::new(stream::StreamManager::new(
         platform_backend.clone(),
         outbound_tx.clone(),
-    ) {
-        Ok(m) => Arc::new(m),
-        Err(e) => {
-            error!("failed to init stream: {}", e);
-            return Err(e);
-        }
-    };
+    ));
 
-    if let Err(e) = stream_manager.start() {
-        error!("pipeline start failed: {}", e);
+    // Auto-start if requested explicitly (--autostart/--stream) or if launched with a remote target host
+    let has_remote_host = initial_cfg.client_host != "127.0.0.1" && !initial_cfg.client_host.is_empty();
+    let explicit_idle = args.iter().any(|arg| arg == "--idle");
+    let autostart = (args.iter().any(|arg| arg == "--autostart" || arg == "--stream") || has_remote_host) && !explicit_idle;
+
+    if autostart {
+        info!("Active streaming session requested on startup for host={}", initial_cfg.client_host);
+        let enc = pipeline::encoders::resolve_encoder(&initial_cfg.encoder, &caps);
+        let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
+            &initial_cfg,
+            enc.as_ref(),
+            platform_backend.as_ref(),
+        );
+        info!("pipeline: {}", pipeline_str);
+        if let Err(e) = stream_manager.start_pipeline(&pipeline_str) {
+            error!("pipeline start failed: {}", e);
+        }
+    } else {
+        info!("{}: engine ready in IDLE mode (waiting for client or IPC start command)", loc::MSG_STREAM_IDLE);
     }
 
     let stream_c = stream_manager.clone();
@@ -185,14 +186,87 @@ async fn main() -> Result<()> {
                     let platform = platform_backend_c.clone();
                     async move {
                         match msg {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::StartStream(maybe_cfg)) => {
+                                let cfg = if let Some(new_cfg) = maybe_cfg {
+                                    let mut merged = config.get();
+                                    if !new_cfg.client_host.is_empty() {
+                                        merged.client_host = new_cfg.client_host;
+                                    }
+                                    if new_cfg.bitrate != 6000 {
+                                        merged.bitrate = new_cfg.bitrate;
+                                    }
+                                    if new_cfg.width.is_some() {
+                                        merged.width = new_cfg.width;
+                                    }
+                                    if new_cfg.height.is_some() {
+                                        merged.height = new_cfg.height;
+                                    }
+                                    if new_cfg.framerate.is_some() {
+                                        merged.framerate = new_cfg.framerate;
+                                    }
+                                    if new_cfg.encoder != config::EncoderChoice::Auto {
+                                        merged.encoder = new_cfg.encoder;
+                                    }
+                                    config.set(merged.clone());
+                                    merged
+                                } else {
+                                    config.get()
+                                };
+
+                                info!(
+                                    "starting pipeline via IPC: host={} encoder={:?} audio_only={}",
+                                    cfg.client_host, cfg.encoder, cfg.audio_only
+                                );
+
+                                let enc = pipeline::encoders::resolve_encoder(&cfg.encoder, &caps);
+                                let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
+                                    &cfg,
+                                    enc.as_ref(),
+                                    platform.as_ref(),
+                                );
+
+                                match stream.start_pipeline(&pipeline_str) {
+                                    Ok(_) => {
+                                        let _ = tx.send(ipc::OutboundMessage::ConfigAck {
+                                            active_encoder: stream.active_encoder(),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!("pipeline start failed: {}", e);
+                                        let _ = tx.send(ipc::OutboundMessage::StreamError {
+                                            message: format!("start failed: {}", e),
+                                        });
+                                    }
+                                }
+                            }
                             ipc::InboundMessage::Control(ipc::ControlMessage::StopStream) => {
-                                info!("stopping pipeline (engine stays alive)");
+                                info!("stopping pipeline (engine remains IDLE and alive)");
                                 let _ = stream.stop();
                             }
-                            ipc::InboundMessage::Control(ipc::ControlMessage::RestartPipeline(cfg)) => {
+                            ipc::InboundMessage::Control(ipc::ControlMessage::RestartPipeline(partial_cfg)) => {
+                                let mut cfg = config.get();
+                                if !partial_cfg.client_host.is_empty() {
+                                    cfg.client_host = partial_cfg.client_host;
+                                }
+                                if partial_cfg.bitrate != 6000 {
+                                    cfg.bitrate = partial_cfg.bitrate;
+                                }
+                                if partial_cfg.width.is_some() {
+                                    cfg.width = partial_cfg.width;
+                                }
+                                if partial_cfg.height.is_some() {
+                                    cfg.height = partial_cfg.height;
+                                }
+                                if partial_cfg.framerate.is_some() {
+                                    cfg.framerate = partial_cfg.framerate;
+                                }
+                                if partial_cfg.encoder != config::EncoderChoice::Auto {
+                                    cfg.encoder = partial_cfg.encoder;
+                                }
+
                                 info!(
-                                    "restarting pipeline via IPC: host={} encoder={:?} audio_only={}",
-                                    cfg.client_host, cfg.encoder, cfg.audio_only
+                                    "restarting pipeline via IPC: host={} encoder={:?} bitrate={} width={:?} height={:?}",
+                                    cfg.client_host, cfg.encoder, cfg.bitrate, cfg.width, cfg.height
                                 );
                                 config.set(cfg.clone());
 
@@ -203,8 +277,7 @@ async fn main() -> Result<()> {
                                     platform.as_ref(),
                                 );
 
-                                info!("new pipeline: {}", pipeline_str);
-                                match stream.restart_pipeline(&pipeline_str) {
+                                match stream.start_pipeline(&pipeline_str) {
                                     Ok(_) => {
                                         let _ = tx.send(ipc::OutboundMessage::ConfigAck {
                                             active_encoder: stream.active_encoder(),
@@ -242,25 +315,27 @@ async fn main() -> Result<()> {
                                     info!("{}: {} -> {}", loc::MSG_MONITOR_SWITCHING, prev_index, cfg.monitor_index);
                                     config.set(cfg.clone());
 
-                                    let enc = pipeline::encoders::resolve_encoder(&cfg.encoder, &caps);
-                                    let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
-                                        &cfg,
-                                        enc.as_ref(),
-                                        platform.as_ref(),
-                                    );
+                                    if stream.is_streaming() {
+                                        let enc = pipeline::encoders::resolve_encoder(&cfg.encoder, &caps);
+                                        let pipeline_str = pipeline::PipelineBuilder::build_pipeline(
+                                            &cfg,
+                                            enc.as_ref(),
+                                            platform.as_ref(),
+                                        );
 
-                                    info!("restarting pipeline for monitor switch: {}", pipeline_str);
-                                    if let Err(e) = stream.restart_pipeline(&pipeline_str) {
-                                        error!("monitor switch restart failed: {}. Falling back to monitor 0.", e);
-                                        if cfg.monitor_index != 0 {
-                                            cfg.monitor_index = 0;
-                                            config.set(cfg.clone());
-                                            let fallback_pipe = pipeline::PipelineBuilder::build_pipeline(
-                                                &cfg,
-                                                enc.as_ref(),
-                                                platform.as_ref(),
-                                            );
-                                            let _ = stream.restart_pipeline(&fallback_pipe);
+                                        info!("restarting active pipeline for monitor switch: {}", pipeline_str);
+                                        if let Err(e) = stream.start_pipeline(&pipeline_str) {
+                                            error!("monitor switch restart failed: {}. Falling back to monitor 0.", e);
+                                            if cfg.monitor_index != 0 {
+                                                cfg.monitor_index = 0;
+                                                config.set(cfg.clone());
+                                                let fallback_pipe = pipeline::PipelineBuilder::build_pipeline(
+                                                    &cfg,
+                                                    enc.as_ref(),
+                                                    platform.as_ref(),
+                                                );
+                                                let _ = stream.start_pipeline(&fallback_pipe);
+                                            }
                                         }
                                     }
                                 }
