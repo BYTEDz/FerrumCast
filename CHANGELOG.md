@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-10-19
+
+- feat: optimize encoder parameters and improve scaling capabilities by @AzharZouhir in dcee3e6
+- feat: enhance Linux backend and add GPU quirks detection by @AzharZouhir in 06c358d
+- feat: enhance encoder verification by checking GStreamer registration and pipeline execution by @AzharZouhir in bbad8f6
+- feat: enhance D3D11 capture availability check and adjust pipeline state timing by @AzharZouhir in 026a36e
+- feat: optimize pipeline latency with zero-latency capability detection and gstreamer queue configuration by @AzharZouhir in f7b57b6
+- feat: implement D3D11 hardware encoders, prioritize d3d11screencapturesrc, and adjust default encoding parameters by @AzharZouhir in cbfd10d
+- feat: improve portal token handling and implement robust cross-platform hardware encoder verification by @AzharZouhir in a4c7167
+- feat: implement detailed stream telemetry and optimize encoder/RTP pipeline settings for improved stability by @AzharZouhir in a391388
+- refactor: streamline GStreamer pipeline configurations by adjusting queue buffering, cleaning up encoder properties, and simplifying hardware acceleration logic. by @AzharZouhir in f716c9f
+- refactor: optimize platform-specific capture pipelines by standardizing D3D11 preference, improving GDI frame pacing, and correcting videoscale/videorate injection. by @AzharZouhir in 2af6770
+- refactor: extract platform display detection logic into dedicated environment modules by @AzharZouhir in b1f574b
+- refactor: restructure platform abstraction by splitting logic into linux/windows submodules and implementing GDI capture by @AzharZouhir in 2f6b9c9
+
 ## [0.1.1] - 2026-08-08
 
 - refactor: harden Windows DLL resolution and GStreamer plugin discovery by prioritizing local paths and isolating registries by @AzharZouhir in baede51
